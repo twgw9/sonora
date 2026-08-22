@@ -227,7 +227,7 @@ font-size:14.5px;font-weight:800;margin-top:14px;box-shadow:var(--glow)}
   <div class="kn"><label>Vinyl texture <b id="vNo">0%</b></label><input type="range" id="kNo" min="0" max="100" value="0"></div>
   <div class="tgl"><span>Rain ambience</span><div class="sww" id="swRain"></div></div>
   <div class="tgl"><span>Vocal reducer</span><div class="sww" id="swKar"></div></div>
-  <div class="tgl"><span>Auto limiter</span><div class="sww on" id="swCmp"></div></div>
+  <div class="tgl"><span>Peak limiter <em style="font-style:normal;opacity:.55;font-size:11px">(off = pure signal)</em></span><div class="sww" id="swCmp"></div></div>
   <div class="tgl"><span>Crossfade tracks</span><div class="sww on" id="swFade"></div></div>
   <button class="wb" id="eqReset">Reset all audio</button>
 </div>
@@ -310,6 +310,33 @@ font-size:14.5px;font-weight:800;margin-top:14px;box-shadow:var(--glow)}
 <div class="tst" id="toast"><span class="tdot"></span><span id="toastT"></span></div>
 <div class="ctx" id="ctx"></div>
 <div class="qpick sc" id="qpick"></div>
+
+<div class="cmdk" id="cmdk">
+  <div class="cmdbox">
+    <div class="cmdin">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.8"/><path d="M20 20l-4-4"/></svg>
+      <input id="cmdInput" placeholder="Search songs, jump anywhere, run a command" autocomplete="off" spellcheck="false">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="cmdlist sc" id="cmdList"></div>
+  </div>
+</div>
+
+<button class="chatfab" id="chatFab" title="Room chat (C)">
+  <svg viewBox="0 0 24 24"><path d="M20.5 11.6a7.6 7.6 0 0 1-8.2 7.6 8.7 8.7 0 0 1-2.5-.4L4.5 20.5l1.7-5.2a7.4 7.4 0 0 1-1-3.7 7.6 7.6 0 0 1 8.2-7.6 7.6 7.6 0 0 1 7.1 7.6z"/></svg>
+  <span class="badge3" id="chatBadge">0</span>
+</button>
+
+<div class="chatdock" id="chatDock">
+  <div class="cdh">
+    <span class="dot3"></span><b id="cdTitle">Room chat</b>
+    <span class="rc2" id="cdCount"></span>
+    <button id="cdMin" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="cdb sc" id="cdBody"></div>
+  <div class="cdf"><input id="cdInput" placeholder="Message the room" maxlength="200" autocomplete="off">
+    <button id="cdSend">Send</button></div>
+</div>
 <audio id="au" preload="auto" crossorigin="anonymous" playsinline></audio>
 <script src="app.js"></script>
 </body>

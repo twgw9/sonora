@@ -319,8 +319,38 @@ R['/api/playlist'] = async q => { try { const d = await saavn({ __call: 'playlis
 R['/api/song'] = async q => { try { const d = await saavn({ __call: 'song.getDetails', pids: q.get('id') });
     return { song: song((d.songs || Object.values(d))[0]) }; }
   catch { const m = await mirror(`/songs/${q.get('id')}`); return { song: mSong(Array.isArray(m) ? m[0] : m?.songs?.[0] || m) }; } };
-R['/api/lyrics'] = async q => { try { const d = await saavn({ __call: 'lyrics.getLyrics', lyrics_id: q.get('id') }, 36e5);
-    return { lyrics: dec(String(d.lyrics || '').replace(/<br\s*\/?>/gi, '\n')) }; } catch { return { lyrics: '' }; } };
+R['/api/lyrics'] = async q => {
+  try {
+    const d = await saavn({ __call: 'lyrics.getLyrics', lyrics_id: q.get('id') }, 36e5);
+    const raw = dec(String(d.lyrics || '').replace(/<br\s*\/?>/gi, '\n'));
+    // parse [mm:ss.xx] timestamps when present so the client can highlight lines
+    const lines = [], plain = [];
+    raw.split('\n').forEach(l => {
+      const m = l.match(/^\s*\[(\d{1,2}):(\d{2})(?:[.:](\d{1,2}))?\]\s*(.*)$/);
+      if (m) { const t = (+m[1]) * 60 + (+m[2]) + (m[3] ? +('0.' + m[3]) : 0);
+        const txt = m[4].trim(); lines.push({ t, x: txt }); plain.push(txt); }
+      else plain.push(l);
+    });
+    return { lyrics: plain.join('\n'), timed: lines.length > 3 ? lines : null,
+      copyright: dec(d.lyrics_copyright || d.snippet || '') };
+  } catch { return { lyrics: '' }; }
+};
+
+/* ---------- F2: artist radio seeded from several of their tracks ---------- */
+R['/api/mix'] = async q => {
+  const seed = String(q.get('a') || '').slice(0, 80);
+  const lang = String(q.get('lang') || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!seed) return { songs: [] };
+  const ck = 'MIX:' + seed + ':' + lang; const c = cget(ck);
+  if (c && Date.now() < c.soft) return c.d;
+  const qs = [seed, seed + ' hits', seed + ' best songs'];
+  const res = await Promise.allSettled(qs.map(x => saavn({ __call: 'search.getResults', q: lang ? x + ' ' + lang : x, n: '20' }, 18e5)));
+  let all = []; res.forEach(r => { if (r.status === 'fulfilled') all.push(...(r.value.results || []).map(song).filter(Boolean)); });
+  all = uniq(all).sort((a, b) => b.pl - a.pl).slice(0, 45);
+  if (!all.length && c) return c.d;
+  const out = { songs: all };
+  cset(ck, out, 18e5); return out;
+};
 R['/api/similar'] = async q => { try { const d = await saavn({ __call: 'reco.getreco', pid: q.get('id') }, 18e5);
     return { songs: uniq((Array.isArray(d) ? d : d.data || []).map(song).filter(Boolean)) }; } catch { return { songs: [] }; } };
 R['/api/mood'] = async q => {
