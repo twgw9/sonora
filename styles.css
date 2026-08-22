@@ -1393,3 +1393,18 @@ body:not(.has-track) .chatdock{bottom:calc(86px + var(--sbb))}
 .cmdgrp{font-size:9.5px;letter-spacing:1.3px;text-transform:uppercase;color:var(--dim);font-weight:820;padding:11px 12px 6px}
 .cmdempty{padding:30px 20px;text-align:center;color:var(--mut);font-size:13px}
 @media(max-width:900px){.cmdk{padding:8vh 10px 10px}.cmdin input{font-size:16px}}
+
+/* ============ v16 — room reliability ============ */
+.rconn{font-size:10px;font-weight:820;letter-spacing:.9px;text-transform:uppercase;color:var(--ac);
+  background:color-mix(in srgb,var(--ac) 12%,transparent);border:1px solid color-mix(in srgb,var(--ac) 30%,transparent);
+  padding:6px 11px;border-radius:12px;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.rconn::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--ac);animation:pulse 1.6s infinite}
+.rconn.bad{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);
+  border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.rconn.bad::before{background:var(--warn)}
+
+/* room cards must never look empty */
+.card2:empty{display:none}
+.rq:empty::after{content:'Loading the queue…';display:block;padding:14px 4px;font-size:12.5px;color:var(--mut)}
+.mems:empty::after{content:'Just you for now';font-size:12px;color:var(--mut)}
+.chat2:empty::after{content:'No messages yet — say hello.';font-size:12.5px;color:var(--mut)}

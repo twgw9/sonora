@@ -5,7 +5,7 @@
 /* Build fingerprint. If the browser is running an older bundle than the server
    serves, every cache and service worker is destroyed and the page reloads once.
    This is what makes "I don't see the changes" impossible. */
-const BUILD = 'v15-2026-08-22';
+const BUILD = 'v17-2026-08-22';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -103,7 +103,7 @@ const S = {
   mode: LS('mode', 'off'), quick: LS('quick', 'lofi'), eq: LS('eq', [0, 0, 0, 0, 0, 0, 0]), eqPre: LS('eqPre', 'flat'),
   rain: false, kar: false, cmp: LS('cmp', false), fade: true, spin: LS('spin', true),
   theme: LS('theme','venom'), dens: LS('dens','default'), accent: LS('accent','default'), font: LS('font','grotesk'), corner: LS('corner','default'),
-  room: null, es: null, host: false, snap: null, me: LS('me', 'Guest' + Math.floor(Math.random() * 900 + 100)),
+  room: LS('room', null), es: null, host: LS('rhost', false), snap: null, me: LS('me', 'Guest' + Math.floor(Math.random() * 900 + 100)),
   tmr: null, tmrEnd: 0, fsTab: 'art',
 };
 try { if (LS('cmp', false) === true && !LS('cmpMigrated', false)) { SET('cmp', false); SET('cmpMigrated', true); } } catch (e) { }
@@ -404,7 +404,7 @@ async function play(list, i) {
   if (!s.u || !Object.keys(s.u).length) { try { const d = await api('/api/song?id=' + s.id); if (d.song) Object.assign(s, d.song); } catch (e) { } }
   const url = surl(s); if (!url) { toast('Track unavailable'); return skip(true); }
   wake(); au.src = url;
-  const v = $('#vol').value / 100; au.volume = S.fade ? 0 : v;
+  const v = clamp($('#vol').value / 100, 0, 1); setVol(S.fade ? 0 : v);
   try { await au.play(); errN = 0; } catch (e) { toast('Tap play to allow audio'); }
   if (S.fade) fadeTo(v, 600);
   applyFX(); paintNow(s);
@@ -414,8 +414,16 @@ async function play(list, i) {
   if ($('#fs').classList.contains('open')) fsRender();
   if (S.room && S.host) rAct('idx', S.idx);
 }
-let fR; function fadeTo(to, ms) { cancelAnimationFrame(fR); const a = au.volume, t0 = performance.now();
-  const st = t => { const k = Math.min(1, (t - t0) / ms); au.volume = a + (to - a) * k; if (k < 1) fR = requestAnimationFrame(st); }; fR = requestAnimationFrame(st); }
+const seekBy = d => { try { if (isFinite(au.duration)) au.currentTime = clamp(au.currentTime + d, 0, au.duration); } catch (e) { } };
+const setVol = v => { try { au.volume = clamp(+v || 0, 0, 1); } catch (e) { } };
+let fR; function fadeTo(to, ms) {
+  cancelAnimationFrame(fR);
+  const a = au.volume, tgt = clamp(+to || 0, 0, 1), t0 = performance.now();
+  if (!ms) return setVol(tgt);
+  const st = t => { const k = clamp((t - t0) / ms, 0, 1); setVol(a + (tgt - a) * k);
+    if (k < 1) fR = requestAnimationFrame(st); };
+  fR = requestAnimationFrame(st);
+}
 
 function paintNow(s) {
   document.body.classList.add('has-track');
@@ -1194,15 +1202,35 @@ function newCode() { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let c = '';
   for (let i = 0; i < 5; i++) c += A[Math.floor(Math.random() * A.length)]; return c; }
 const inviteURL = c => location.origin + '/?room=' + (c || S.room);
 
+let roomPoll = 0, roomLive = false;
+function setRoomLive(v) {
+  roomLive = v;
+  const b = document.querySelector('.cdh .dot3');
+  if (b) b.style.background = v ? 'var(--ac)' : 'var(--warn)';
+  const t = $('#rConn');
+  if (t) { t.textContent = v ? 'Connected' : 'Reconnecting'; t.classList.toggle('bad', !v); }
+}
+async function pullRoom() {
+  if (!S.room) return;
+  try {
+    const d = await api('/api/room/state?c=' + S.room, { cache: false, tries: 0 });
+    if (d && d.code) { S.snap = d; paintRoom(d); follow(d); setRoomLive(true); }
+  } catch (e) { setRoomLive(false); }
+}
 function joinRoom(code, host) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
   if (code.length < 3) return toast('That code looks wrong');
-  S.room = code; S.host = !!host;
+  S.room = code; S.host = !!host; SET('room', code); SET('rhost', !!host);
   if (S.es) { try { S.es.close(); } catch (e) { } }
   S.es = new EventSource('/api/room/sub?c=' + code);
   S.es.addEventListener('state', e => { try { const d = JSON.parse(e.data);
-    S.snap = d; paintRoom(d); if (!amHost()) follow(d); } catch (err) { } });
-  S.es.onerror = () => { };
+    S.snap = d; paintRoom(d); follow(d); setRoomLive(true); } catch (err) { } });
+  S.es.onopen = () => setRoomLive(true);
+  S.es.onerror = () => { setRoomLive(false); };
+  // safety net: poll every 4s so the room still works if SSE is blocked by a proxy
+  clearInterval(roomPoll);
+  roomPoll = setInterval(() => { if (S.room && !document.hidden) pullRoom(); }, 4000);
+  pullRoom();
   rAct('join');
   if (host && S.queue.length) rAct('queue', JSON.stringify(S.queue.slice(0, 60)));
   if (!S.snap) S.snap = { code, queue: [], idx: 0, playing: false, chat: [], users: [{ n: S.me, id: MYID, host: !!host }], host: host ? MYID : null };
@@ -1212,9 +1240,10 @@ function joinRoom(code, host) {
   if (S.view !== 'room') nav('room'); else render();
 }
 function leaveRoom() {
+  clearInterval(roomPoll); roomPoll = 0;
   rAct('leave');
   if (S.es) { try { S.es.close(); } catch (e) { } }
-  S.es = null; S.room = null; S.host = false; S.snap = null;
+  S.es = null; S.room = null; S.host = false; S.snap = null; SET('room', null); SET('rhost', false);
   document.body.classList.remove('in-room'); $('#chatDock').classList.remove('open'); cdOpen = false;
   toast('You left the room'); render();
 }
@@ -1228,6 +1257,7 @@ function follow(d, force) {
   // adopt the room queue so Up next / Queue views match everyone else
   S.queue = d.queue; S.idx = d.idx; counts();
 
+  if (amHost() && cur && cur.id === t.id) { roomLastId = t.id; return; }
   if (force || !cur || cur.id !== t.id || roomLastId !== t.id) {
     roomLastId = t.id;
     roomSyncing = true;
@@ -1241,8 +1271,9 @@ function follow(d, force) {
     return;
   }
   if (roomSyncing) return;
+  if (amHost()) return;                       // host is the clock; never correct them
   const drift = Math.abs(au.currentTime - d.pos);
-  if (d.playing && drift > 2.2) au.currentTime = d.pos;
+  if (d.playing && drift > 2.2) { try { au.currentTime = d.pos; } catch (e) { } }
   if (d.playing && au.paused) au.play().catch(() => toast('Tap play to join the audio'));
   if (!d.playing && !au.paused) au.pause();
 }
@@ -1306,7 +1337,10 @@ function roomPlayNow(song) {
     const i = sn.queue.findIndex(x => x.id === song.id);
     if (i >= 0) sn.idx = i; else { sn.queue.splice(sn.idx + 1, 0, song); sn.idx = sn.idx + 1; }
     sn.playing = true;
-  });
+  }).then(d => { if (d && d.queue) follow(d, true); });   // host hears it too
+  // start immediately so the person who pressed it never waits on the round trip
+  const local = S.queue.findIndex(x => x.id === song.id);
+  if (local >= 0) play(null, S.idx = local); else play([...S.queue.slice(0, S.idx + 1), song, ...S.queue.slice(S.idx + 1)], S.idx + 1);
   toast('Playing in the room');
 }
 function roomPlayList(list) {
@@ -1319,6 +1353,7 @@ function roomPlayList(list) {
     $('#rpNo').onclick = closeM;
     $('#rpYes').onclick = () => { closeM();
       rAct('queue', JSON.stringify(list.slice(0, 60)), sn => { sn.queue = list.slice(0, 60); sn.idx = 0; sn.playing = true; });
+      play(list.slice(0, 60), 0);
       toast('Playing for the room'); };
   });
 }
@@ -1361,14 +1396,15 @@ function vRoom(v) {
   const codebox = el('div', 'codebox', `
     <div><div class="lbl2">Room code</div><div class="cd2">${esc(S.room)}</div></div>
     <div class="acts">
+      <span class="rconn" id="rConn">Connecting</span>
       <button class="sbtn pri" id="rShare">Share invite</button>
       <button class="sbtn" id="rCopy">Copy code</button>
       <button class="sbtn" id="rLeave">Leave</button>
     </div>`);
   v.appendChild(codebox);
-  $('#rShare').onclick = shareRoom;
-  $('#rCopy').onclick = () => { navigator.clipboard?.writeText(S.room); toast('Code copied — ' + S.room); };
-  $('#rLeave').onclick = () => modal(`<h3>Leave this room?</h3>
+  codebox.querySelector('#rShare').onclick = shareRoom;
+  codebox.querySelector('#rCopy').onclick = () => { navigator.clipboard?.writeText(S.room); toast('Code copied — ' + S.room); };
+  codebox.querySelector('#rLeave').onclick = () => modal(`<h3>Leave this room?</h3>
     <div class="sb2">Playback stops syncing. You can rejoin with the same code any time.</div>
     <div class="twobtn"><button class="wb" id="lNo" style="margin:0">Stay</button>
     <button class="wb pri" id="lYes" style="margin:0">Leave room</button></div>`,
@@ -1386,9 +1422,11 @@ function vRoom(v) {
   findBar.innerHTML = `<input id="rFind" placeholder="Search a song to play in the room" autocomplete="off">
     <button id="rFindGo">Search</button>`;
   qCard.appendChild(findBar);
+  const findInput = findBar.querySelector('#rFind');
+  const findBtn = findBar.querySelector('#rFindGo');
   const rres = el('div', 'rres'); rres.id = 'rRes'; qCard.appendChild(rres);
   const doFind = async () => {
-    const v = $('#rFind').value.trim(); if (!v) return;
+    const v = findInput.value.trim(); if (!v) return;
     rres.innerHTML = '<div class="sb2" style="padding:8px 4px;margin:0">Searching…</div>';
     try {
       const d = await api('/api/search?q=' + encodeURIComponent(v) + '&n=12');
@@ -1406,8 +1444,8 @@ function vRoom(v) {
           row.style.opacity = .45; }); });
     } catch (e) { rres.innerHTML = '<div class="sb2" style="padding:8px 4px;margin:0">Search failed.</div>'; }
   };
-  $('#rFindGo').onclick = doFind;
-  $('#rFind').onkeydown = e => { if (e.key === 'Enter') doFind(); };
+  findBtn.onclick = doFind;
+  findInput.onkeydown = e => { if (e.key === 'Enter') doFind(); };
 
   const qActs = el('div', 'chips'); qActs.style.marginBottom = '12px';
   const mkq = (t, fn, pri) => { const b = el('button', 'sbtn' + (pri ? ' pri' : ''), t); b.onclick = fn; return b; };
@@ -1418,7 +1456,7 @@ function vRoom(v) {
         <div class="twobtn"><button class="wb" id="qNo" style="margin:0">Cancel</button>
         <button class="wb pri" id="qYes" style="margin:0">Share queue</button></div>`,
         () => { $('#qNo').onclick = closeM;
-          $('#qYes').onclick = () => { closeM(); rAct('queue', JSON.stringify(S.queue.slice(0, 60))); toast('Queue shared'); }; }); }, 1),
+          $('#qYes').onclick = () => { closeM(); const q = S.queue.slice(0, 60); rAct('queue', JSON.stringify(q)); play(q, 0); toast('Queue shared'); }; }); }, 1),
     mkq('Play what I am playing', () => { const c = S.queue[S.idx];
       if (!c) return toast('Play something first'); roomPlayNow(c); }),
     mkq('Add my liked', () => { if (!S.liked.length) return toast('Nothing liked yet');
@@ -1445,18 +1483,26 @@ function vRoom(v) {
   right.appendChild(cCard);
   grid.appendChild(right);
 
-  const send = () => { const m = $('#rMsg').value.trim(); if (!m) return;
-    $('#rMsg').value = '';
+  const msgInput = cCard.querySelector('#rMsg');
+  const sendBtn = cCard.querySelector('#rSend');
+  const send = () => { const m = msgInput.value.trim(); if (!m) return;
+    msgInput.value = '';
     rAct('chat', m, sn => { sn.chat = [...(sn.chat || []), { u: S.me, m, t: Date.now() }].slice(-70); }); };
-  $('#rSend').onclick = send;
-  $('#rMsg').onkeydown = e => { if (e.key === 'Enter') send(); };
+  sendBtn.onclick = send;
+  msgInput.onkeydown = e => { if (e.key === 'Enter') send(); };
 
-  paintRoom(S.snap);
+  try { paintRoom(S.snap); } catch (e) { console.warn('paintRoom', e); }
+  pullRoom();
 }
 
 function paintRoom(d) {
   paintDock(d);
-  if (!d || S.view !== 'room' || !S.room) return;
+  if (!S.room) return;
+  // never bail out: render with a safe empty snapshot so the cards always fill in
+  d = d || S.snap || { code: S.room, queue: [], idx: 0, playing: false, chat: [], users: [] };
+  d.queue = d.queue || []; d.chat = d.chat || []; d.users = d.users || [];
+  if (!d.users.length) d.users = [{ n: S.me, id: MYID, host: true }];
+  if (S.view !== 'room') return;
   const host = amHost();
 
   /* now playing + up next */
@@ -1961,7 +2007,7 @@ $('#fsB').onclick = () => { S.fsTab = 'art'; openFS(); };
 $('#pArt').onclick = $('#pMeta').onclick = $('#mImg').onclick = $('#mMeta').onclick = () => { S.fsTab = 'art'; openFS(); };
 $('#fsX').onclick = () => $('#fs').classList.remove('open');
 $('#mdl').onclick = e => { if (e.target.id === 'mdl') closeM(); };
-$('#vol').oninput = e => { au.volume = e.target.value / 100; au.muted = false; volIcon(); };
+$('#vol').oninput = e => { setVol(e.target.value / 100); au.muted = false; volIcon(); };
 $('#mute').onclick = () => { au.muted = !au.muted; volIcon(); toast(au.muted ? 'Muted' : 'Unmuted'); };
 function volIcon() { const v = au.muted ? 0 : au.volume;
   $('#vIco').innerHTML = v === 0 ? '<path d="M4 9.4v5.2h3.4L12 18.5v-13L7.4 9.4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>'
@@ -2022,10 +2068,13 @@ au.onerror = () => { if (!au.src) return; errN++;
   const b = $('#qMode'), m = $('#mMode');
   let held = false, tmr = 0;
   const start = () => { held = false; tmr = setTimeout(() => { held = true; buzz(18); openQuickPick(b); }, 480); };
-  const end = e => { clearTimeout(tmr); if (!held) toggleQuick(); else e && e.preventDefault(); };
+  const end = e => { clearTimeout(tmr); if (!held) { fired = true; toggleQuick(); } else e && e.preventDefault(); };
+  let fired = false;
   if (b) {
     b.addEventListener('mousedown', start);
     b.addEventListener('mouseup', end);
+    // plain click (keyboard, synthetic, assistive tech) still toggles
+    b.addEventListener('click', () => { if (fired) { fired = false; return; } clearTimeout(tmr); toggleQuick(); });
     b.addEventListener('mouseleave', () => clearTimeout(tmr));
     b.addEventListener('touchstart', start, { passive: true });
     b.addEventListener('touchend', end);
@@ -2092,7 +2141,7 @@ $$('#tmBtns .op').forEach(b => b.onclick = () => {
   if (!m) { S.tmrEnd = -1; $('#tmState').textContent = 'Playback stops when this track ends.'; return toast('Stopping after this track'); }
   S.tmrEnd = Date.now() + m * 6e4;
   S.tmr = setInterval(() => { const l = S.tmrEnd - Date.now();
-    if (l <= 0) { clearInterval(S.tmr); fadeTo(0, 5000); setTimeout(() => { au.pause(); au.volume = $('#vol').value / 100; }, 5200);
+    if (l <= 0) { clearInterval(S.tmr); fadeTo(0, 5000); setTimeout(() => { au.pause(); setVol($('#vol').value / 100); }, 5200);
       $('#tmState').textContent = 'No timer running.'; return toast('Sleep timer finished'); }
     $('#tmState').textContent = `Fading out in ${fmt(l / 1000)}.`; }, 1000);
   toast('Sleep timer set for ' + m + ' minutes');
@@ -2109,10 +2158,10 @@ addEventListener('keydown', e => {
   if (ty) return;
   const k = e.key.toLowerCase();
   if (e.code === 'Space') { e.preventDefault(); toggle(); }
-  if (e.key === 'ArrowRight') au.currentTime += 5;
-  if (e.key === 'ArrowLeft') au.currentTime -= 5;
-  if (e.key === 'ArrowUp') { e.preventDefault(); const v = Math.min(100, +$('#vol').value + 5); $('#vol').value = v; au.volume = v / 100; volIcon(); }
-  if (e.key === 'ArrowDown') { e.preventDefault(); const v = Math.max(0, +$('#vol').value - 5); $('#vol').value = v; au.volume = v / 100; volIcon(); }
+  if (e.key === 'ArrowRight') seekBy(5);
+  if (e.key === 'ArrowLeft') seekBy(-5);
+  if (e.key === 'ArrowUp') { e.preventDefault(); const v = Math.min(100, +$('#vol').value + 5); $('#vol').value = v; setVol(v / 100); volIcon(); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); const v = Math.max(0, +$('#vol').value - 5); $('#vol').value = v; setVol(v / 100); volIcon(); }
   if (k === 'n') skip(false); if (k === 'p') prevTrack();
   if (k === 's') shufFn(); if (k === 'r') repFn();
   if (k === 'l') { const s = S.queue[S.idx]; s && like(s); }
@@ -2142,7 +2191,11 @@ if ('mediaSession' in navigator) try {
   navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
   navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime != null) au.currentTime = d.seekTime; });
 } catch (e) { }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.room && S.snap && !S.host) follow(S.snap); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !S.room) return;
+  pullRoom();
+  if (S.es && S.es.readyState === 2) joinRoom(S.room, S.host);   // closed -> reopen
+});
 
 /* ================= ONBOARDING GATE ================= */
 function initGate() {
@@ -2208,7 +2261,7 @@ $('#swCmp').classList.toggle('on', S.cmp);
 if (S.mode !== 'off') setMode(S.mode, true); else { S.eq = LS('eq', [0, 0, 0, 0, 0, 0, 0]); drawEQ(); }
 initGate();
 paintQuick();
-au.volume = .9; volIcon();
+setVol(.9); volIcon();
 document.body.classList.remove('has-track');
 counts(); render();
 if ('serviceWorker' in navigator) addEventListener('load', async () => {
@@ -2241,5 +2294,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) beat
 addEventListener('online', () => { setNet(false); MEM.clear(); });
 addEventListener('offline', () => setNet(true, 'You are offline'));
 if (!navigator.onLine) setNet(true, 'You are offline');
+if (S.room && !S.es) {
+  const saved = S.room; S.room = null;          // let joinRoom wire everything up
+  setTimeout(() => joinRoom(saved, LS('rhost', false)), 300);
+}
 const rp = new URLSearchParams(location.search).get('room');
 if (rp) setTimeout(() => askJoin(rp), 700);
