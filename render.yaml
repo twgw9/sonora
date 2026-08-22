@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: sonora
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: echo "no build step required"
+    startCommand: node start.js
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: KEEPALIVE_URL
+        fromService:
+          type: web
+          name: sonora
+          property: host

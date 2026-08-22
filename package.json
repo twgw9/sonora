@@ -1,0 +1,14 @@
+{
+  "name": "sonora",
+  "version": "6.0.0",
+  "private": true,
+  "description": "Sonora - premium music streaming with a 7-band equaliser, studio sound modes, downloads and live listening rooms",
+  "main": "start.js",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "node --openssl-legacy-provider server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
