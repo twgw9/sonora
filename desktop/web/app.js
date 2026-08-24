@@ -631,37 +631,9 @@ function paintNow(s) {
   document.title = s.t + ' · Sonora';
   const sr = $('#srLive'); if (sr) sr.textContent = 'Now playing ' + s.t + ' by ' + s.a;
   if ('mediaSession' in navigator) try {
-    /* Artwork at several real sizes rather than one URL repeated: the lock
-       screen picks the size it wants, and a 500x500 cover on a notification
-       shelf is wasted bandwidth on mobile data. */
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: s.t, artist: s.a, album: s.al || 'Sonora',
-      artwork: [96, 128, 192, 256, 384, 512].map(x => ({
-        src: imgAt(s.img, x <= 128 ? 150 : 500), sizes: x + 'x' + x, type: 'image/jpeg'
-      }))
-    });
-    navigator.mediaSession.playbackState = au.paused ? 'paused' : 'playing';
+    navigator.mediaSession.metadata = new MediaMetadata({ title: s.t, artist: s.a, album: s.al,
+      artwork: [96, 192, 256, 384, 512].map(x => ({ src: s.img, sizes: x + 'x' + x, type: 'image/jpeg' })) });
   } catch (e) { }
-}
-
-/* Keep the lock screen scrubber honest. Without setPositionState the OS shows
-   a bar that never moves, or worse, one left over from the previous track. */
-function mediaPos() {
-  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
-  try {
-    const d = au.duration;
-    if (!isFinite(d) || d <= 0) return;
-    navigator.mediaSession.setPositionState({
-      duration: d,
-      playbackRate: au.playbackRate || 1,
-      position: Math.min(Math.max(au.currentTime || 0, 0), d)
-    });
-  } catch (e) { }
-}
-function mediaState() {
-  if (!('mediaSession' in navigator)) return;
-  try { navigator.mediaSession.playbackState = au.paused ? 'paused' : 'playing'; } catch (e) { }
-  mediaPos();
 }
 async function skip(auto) {
   if (S.repeat === 'one' && auto) { au.currentTime = 0; au.play(); return; }
@@ -1846,10 +1818,26 @@ async function vGet(v) {
       .forEach(([t, d2], i) => how.appendChild(el('div', 'step4', `<b><i>${i + 1}</i>${esc(t)}</b><span>${esc(d2)}</span>`)));
     v.appendChild(how);
 
-    /* The update source is baked in and deliberately not editable.
-       A field that repoints the app at any URL is a way to hand someone
-       a link that turns their copy into something else entirely. */
     const adv = el('div', 'chips');
+    const chg = el('button', 'chip', 'Change source');
+    chg.onclick = () => modal(`<h3>Update source</h3>
+      <div class="sb2">The raw address of the folder holding version.json. Leave blank to use the one built in.</div>
+      <input class="inp" id="srcIn" placeholder="https://raw.githubusercontent.com/user/repo/main/">
+      <div class="twobtn"><button class="wb" id="srcNo" style="margin:0">Cancel</button>
+      <button class="wb pri" id="srcYes" style="margin:0">Save</button></div>`, async () => {
+        try { const i = await api(statusURL, { cache: false, tries: 0 }); $('#srcIn').value = i.source || ''; } catch (e) { }
+        $('#srcNo').onclick = closeM;
+        $('#srcYes').onclick = async () => {
+          const u = $('#srcIn').value.trim();
+          closeM();
+          try {
+            await api((native ? '/api/update/source?url=' : '/api/selfupdate/source?url=') + encodeURIComponent(u), { cache: false, tries: 0 });
+            toast('Update source saved');
+            paint(await api(statusURL, { cache: false, tries: 0 }));
+          } catch (e) { toast('Could not save'); }
+        };
+      });
+    adv.appendChild(chg);
     const rb = el('button', 'chip', 'Roll back');
     rb.onclick = () => askConfirm('Roll back this update?',
       'Sonora returns to the last version that was known to work. Your library is not touched.',
@@ -3204,17 +3192,8 @@ if ('mediaSession' in navigator) try {
   navigator.mediaSession.setActionHandler('pause', () => au.pause());
   navigator.mediaSession.setActionHandler('nexttrack', () => skip(false));
   navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
-  navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime != null) { au.currentTime = d.seekTime; mediaPos(); } });
-  // the two skip buttons Android puts on the notification when they exist
-  navigator.mediaSession.setActionHandler('seekbackward', d => { seekBy(-(d && d.seekOffset || 10)); mediaPos(); });
-  navigator.mediaSession.setActionHandler('seekforward', d => { seekBy(d && d.seekOffset || 10); mediaPos(); });
-  navigator.mediaSession.setActionHandler('stop', () => { au.pause(); mediaState(); });
+  navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime != null) au.currentTime = d.seekTime; });
 } catch (e) { }
-// mirror real playback state to the lock screen and the notification shelf
-['play', 'pause', 'ratechange'].forEach(ev => au.addEventListener(ev, mediaState));
-au.addEventListener('loadedmetadata', mediaPos);
-au.addEventListener('seeked', mediaPos);
-setInterval(() => { if (!au.paused && !document.hidden) mediaPos(); }, 5000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !S.room) return;
   pullRoom();
@@ -3313,19 +3292,7 @@ setTimeout(() => {
   }
   setTimeout(() => $('#boot').classList.add('gone'), 2500);
 }, 5000);
-/* The listener count polled every 30 seconds and only on a timer, so it could
-   sit stale for half a minute, and coming back to the tab showed whatever it
-   had last seen. Poll faster while the page is in front of you, back off when
-   it is not, and refresh immediately on the events that change the number:
-   returning to the tab, starting or stopping playback, changing track. */
-function liveTick() {
-  clearInterval(liveTimer);
-  liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 12000);
-}
-beat(); liveTick();
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { beat(); liveTick(); } });
-addEventListener('online', () => beat());
-['play', 'pause', 'ended'].forEach(ev => au.addEventListener(ev, () => setTimeout(beat, 220)));
+beat(); liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
 addEventListener('online', () => { setNet(false); MEM.clear(); netFails = 0; render(); });
 addEventListener('offline', () => setNet(true, 'You are offline'));

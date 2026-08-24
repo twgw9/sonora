@@ -1,7 +1,7 @@
 {
-  "version": 5,
+  "version": 6,
   "minApk": 1,
-  "notes": "Rooms work without EventSource, destructive actions ask in-app instead of a blocked browser dialog, no more leaked blobs, download sheet stops when closed",
+  "notes": "Lyrics from two sources with synced timings, 3x bigger search, card menus and playlist buttons, glass theme, optional home widgets, lock screen controls, faster listener count",
   "date": "2026-08-24",
   "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
   "repo": "https://github.com/twgw9/sonora"

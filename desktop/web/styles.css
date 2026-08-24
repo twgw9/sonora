@@ -214,7 +214,7 @@ input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radiu
 .tb:hover{color:var(--tx)}
 .tb:active{transform:scale(.95)}
 .tb.on{background:var(--grad);color:var(--acd);box-shadow:var(--glow)}
-.sg{position:absolute;top:48px;left:0;right:0;background:var(--bg2);border:1px solid var(--line);border-radius:17px;box-shadow:var(--sh);overflow-y:auto;overflow-x:hidden;display:none;z-index:70;max-height:min(430px,58vh);overscroll-behavior:contain}
+.sg{position:absolute;top:48px;left:0;right:0;background:var(--bg2);border:1px solid var(--line);border-radius:17px;box-shadow:var(--sh);overflow:hidden;display:none;z-index:50;max-height:min(430px,60vh);overflow-y:auto}
 .sg.open{display:block;animation:pop .22s var(--ease)}
 .sgi{display:flex;gap:11px;align-items:center;padding:9px 13px;cursor:pointer;transition:background .12s}
 .sgi:hover,.sgi.sel{background:var(--el2)}
@@ -1188,20 +1188,3 @@ body[data-t="paper"].glass{--gl-bd:color-mix(in srgb,#000 9%,transparent)}
    settings row rather than an advert. */
 .tgrow{border-color:color-mix(in srgb,var(--ac) 32%,var(--line))}
 .tgbtn{text-decoration:none;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
-
-/* ---------- search on a phone ----------
-   The box shares the top bar with five other controls, so at phone widths it
-   was squeezed down to a sliver and the placeholder was cut in half. Give it
-   the row to itself and let the suggestion list use the full width. */
-@media(max-width:900px){
-  .bar{flex-wrap:wrap;row-gap:8px}
-  .srch{order:10;flex:1 1 100%;max-width:none;min-width:0}
-  .srch input{font-size:16px}          /* under 16px iOS zooms the whole page */
-  .sg{top:46px;max-height:min(420px,52vh)}
-  .sgi{padding:11px 13px}              /* a comfortable tap target */
-  .sgi img{width:42px;height:42px;flex:0 0 42px}
-}
-@media(max-width:600px){
-  .getbtn span{display:none}           /* icon only, to buy the search box room */
-  .bar{gap:6px;padding-left:10px;padding-right:10px}
-}
