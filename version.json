@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 10,
   "minApk": 1,
   "notes": "Phone layout rebuilt, card menus on every card, dismissable download strip, home screen shortcuts, widgets off by default",
   "date": "2026-08-24",
