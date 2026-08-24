@@ -7,7 +7,7 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v32-2026-08-24';
+const BUILD = 'v33-2026-08-24';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -631,9 +631,37 @@ function paintNow(s) {
   document.title = s.t + ' · Sonora';
   const sr = $('#srLive'); if (sr) sr.textContent = 'Now playing ' + s.t + ' by ' + s.a;
   if ('mediaSession' in navigator) try {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: s.t, artist: s.a, album: s.al,
-      artwork: [96, 192, 256, 384, 512].map(x => ({ src: s.img, sizes: x + 'x' + x, type: 'image/jpeg' })) });
+    /* Artwork at several real sizes rather than one URL repeated: the lock
+       screen picks the size it wants, and a 500x500 cover on a notification
+       shelf is wasted bandwidth on mobile data. */
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: s.t, artist: s.a, album: s.al || 'Sonora',
+      artwork: [96, 128, 192, 256, 384, 512].map(x => ({
+        src: imgAt(s.img, x <= 128 ? 150 : 500), sizes: x + 'x' + x, type: 'image/jpeg'
+      }))
+    });
+    navigator.mediaSession.playbackState = au.paused ? 'paused' : 'playing';
   } catch (e) { }
+}
+
+/* Keep the lock screen scrubber honest. Without setPositionState the OS shows
+   a bar that never moves, or worse, one left over from the previous track. */
+function mediaPos() {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+  try {
+    const d = au.duration;
+    if (!isFinite(d) || d <= 0) return;
+    navigator.mediaSession.setPositionState({
+      duration: d,
+      playbackRate: au.playbackRate || 1,
+      position: Math.min(Math.max(au.currentTime || 0, 0), d)
+    });
+  } catch (e) { }
+}
+function mediaState() {
+  if (!('mediaSession' in navigator)) return;
+  try { navigator.mediaSession.playbackState = au.paused ? 'paused' : 'playing'; } catch (e) { }
+  mediaPos();
 }
 async function skip(auto) {
   if (S.repeat === 'one' && auto) { au.currentTime = 0; au.play(); return; }
@@ -773,6 +801,34 @@ function askConfirm(title, body, confirmLabel, onYes) {
     });
 }
 
+/* Drop a whole album or playlist into one of your own lists. Duplicates are
+   skipped rather than refused, so adding an album you half-own does the
+   sensible thing instead of erroring. */
+function addManyToPl(list, label) {
+  const rows = S.pls.map((p, i) =>
+    `<button class="db" data-i="${i}" style="text-align:left">${esc(p.name)}
+     <span style="opacity:.5">· ${p.songs.length}</span></button>`).join('')
+    || '<span class="sb2">No playlists yet. Name one below.</span>';
+  modal(`<h3>Add ${list.length} tracks</h3>
+    <div class="sb2">${esc(label || '')}</div>
+    <div class="dlr" style="flex-direction:column;align-items:stretch">${rows}</div>
+    <input class="inp" id="pn" placeholder="New playlist name">
+    <button class="wb pri" id="pg">Create and add</button>`, m => {
+    const put = p => {
+      const have = new Set(p.songs.map(x => x.id));
+      const fresh = list.filter(x => !have.has(x.id));
+      p.songs.push(...fresh); save(); closeM();
+      toast(fresh.length ? `Added ${fresh.length} to ${p.name}` : 'All of those were already in there');
+    };
+    m.querySelectorAll('[data-i]').forEach(b => b.onclick = () => put(S.pls[+b.dataset.i]));
+    $('#pg').onclick = () => {
+      const n = $('#pn').value.trim(); if (!n) return toast('Enter a name');
+      const p = { id: Date.now(), name: n, songs: [] };
+      S.pls.push(p); put(p);
+    };
+  });
+}
+
 function addToPl(s) {
   modal(`<h3>Add to playlist</h3><div class="sb2">${esc(s.t)}</div>
     <div class="dlr" style="flex-direction:column;align-items:stretch">
@@ -881,34 +937,116 @@ function widgetBoard() {
   return b;
 }
 
+/* Home screen shortcuts are a platform feature, not something a web page can
+   install for you — so explain where they already are rather than pretending
+   there is a button for it. */
+function homeScreenHelp() {
+  const ua = navigator.userAgent || '', plat = navigator.platform || '';
+  const iOS = /iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(plat) && navigator.maxTouchPoints > 1);
+  const android = /Android/i.test(ua);
+  const installed = matchMedia('(display-mode: standalone)').matches;
+
+  const steps = android ? [
+    ['Install Sonora first', installed ? 'Already installed on this device.' : 'Browser menu, then Install app or Add to Home Screen.'],
+    ['Press and hold the icon', 'On your home screen, hold the Sonora icon for a moment.'],
+    ['Four shortcuts appear', 'Trending, Liked, Search and Rooms. Each opens straight into that screen.'],
+    ['Drag one out', 'Hold a shortcut and drag it onto the home screen to keep it as its own icon.']
+  ] : iOS ? [
+    ['Add to Home Screen', installed ? 'Already added on this device.' : 'In Safari, tap Share, then Add to Home Screen.'],
+    ['Touch and hold the icon', 'Quick actions appear above it.'],
+    ['Pick a shortcut', 'Trending, Liked, Search or Rooms.'],
+    ['A note on iOS', 'Apple does not let a web app place its own home screen widget, so shortcuts are as far as it goes.']
+  ] : [
+    ['Install Sonora', installed ? 'Already installed.' : 'Use the install icon in the address bar.'],
+    ['Right-click the icon', 'On the taskbar, dock or Start menu.'],
+    ['Jump straight in', 'Trending, Liked, Search and Rooms are all one click away.']
+  ];
+
+  modal(`<h3>Sonora on your home screen</h3>
+    <div class="sb2">The cards inside the app are one thing; these are shortcuts on the
+    device itself, so you land where you want without opening Sonora first.</div>
+    <div class="steps4" style="margin-top:12px">
+      ${steps.map(([t, d], i) => `<div class="step4"><b><i>${i + 1}</i>${esc(t)}</b><span>${esc(d)}</span></div>`).join('')}
+    </div>
+    <div class="twobtn"><button class="wb pri" id="hsOk" style="margin:0">Got it</button></div>`,
+    () => { const b = $('#hsOk'); if (b) b.onclick = closeM; });
+}
+
 /* ================= BUILDERS ================= */
-function cardEl(x, cb, yr) {
+function cardEl(x, cb, yr, song) {
   /* A song card carries two quick actions in the corner of the artwork: a
      playlist button and an overflow menu. They were previously reachable only
      by right-clicking, which no phone can do, so on a touch device the only
      way to queue or download a track was to play it first. They stay faded
      until the card is hovered or focused so they do not fight the artwork. */
-  const isSong = !x.k || x.k === 'song';
-  const c = el('div', 'cd', `<div class="th"><img loading="lazy" decoding="async" src="${imgAt(x.img, 150)}" srcset="${imgSet(x.img, 150)}" sizes="150px" alt="" onload="this.classList.add('rdy')" onerror="this.classList.add('rdy')">
-    ${yr && x.y ? `<span class="yr">${esc(x.y)}</span>` : ''}
-    ${isSong ? `<div class="cact">
+  /* Whether a card is a track cannot be read off x.k: the home feed labels
+     its own rows, so a playable track there arrives tagged 'album'. The
+     caller is the only thing that actually knows, so it says so. Artists are
+     the one kind with nothing to queue. */
+  const isSong = song === true || (song === undefined && (!x.k || x.k === 'song'));
+  const isArtist = x.k === 'artist';
+  const acts = isArtist ? '' : `<div class="cact">
       <button class="ca" data-a="pl" title="Add to playlist" aria-label="Add to playlist">${I.plus}</button>
       <button class="ca" data-a="more" title="More" aria-label="More options">${I.dots}</button>
-    </div>` : ''}
+    </div>`;
+  const c = el('div', 'cd', `<div class="th"><img loading="lazy" decoding="async" src="${imgAt(x.img, 150)}" srcset="${imgSet(x.img, 150)}" sizes="150px" alt="" onload="this.classList.add('rdy')" onerror="this.classList.add('rdy')">
+    ${yr && x.y ? `<span class="yr">${esc(x.y)}</span>` : ''}
+    ${acts}
     <button class="pf">${I.play}</button></div>
     <div class="meta2"><h4>${esc(x.t)}</h4><p>${esc(x.s || x.a || '')}</p></div>`);
   c.onclick = cb;
-  if (isSong) c.querySelectorAll('.ca').forEach(b => {
+  c.querySelectorAll('.ca').forEach(b => {
     b.onclick = e => {
       e.stopPropagation();                       // never start playback
-      if (b.dataset.a === 'pl') addToPl(x);
-      else ctxMenu(e, x);
+      e.preventDefault();
+      if (b.dataset.a === 'pl') isSong ? addToPl(x) : collToPl(x);
+      else isSong ? ctxMenu(e, x) : collMenu(e, x);
     };
   });
   return c;
 }
-const sGrid = (a, rail, yr) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach((s, i) => g.appendChild(cardEl(s, () => play(a, i), yr))); return g; };
-const cGrid = (a, rail) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach(x => g.appendChild(cardEl(x, () => x.k === 'artist' ? openArtist(x) : openColl(x)))); return g; };
+const sGrid = (a, rail, yr) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach((s, i) => g.appendChild(cardEl(s, () => play(a, i), yr, true))); return g; };
+const cGrid = (a, rail) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach(x => g.appendChild(cardEl(x, () => x.k === 'artist' ? openArtist(x) : openColl(x), false, false))); return g; };
+
+/* An album or playlist card needs its own menu: you cannot queue a container
+   without fetching what is inside it first. */
+async function collTracks(x) {
+  try {
+    const d = await api((x.k === 'playlist' ? '/api/playlist?id=' : '/api/album?id=') + encodeURIComponent(x.id));
+    return (d.songs || []).filter(s => s && s.id);
+  } catch (e) { return []; }
+}
+function collMenu(e, x) {
+  const c = $('#ctx');
+  const items = [['p', I.play, 'Play all'], ['n', I.next, 'Play next'], ['q', I.queue, 'Add to queue'],
+    ['f', I.plus, 'Add all to playlist'], ['o', I.disc, 'Open'], ['s', I.share, 'Share'],
+    ...(S.room ? [['m', I.plus, 'Add all to room']] : [])];
+  c.innerHTML = items.map(([k, ic, t]) => `<button data-k="${k}">${ic}${t}</button>`).join('');
+  c.classList.add('open');
+  const h = c.offsetHeight || 260;
+  c.style.left = clamp(e.clientX, 8, innerWidth - 216) + 'px';
+  c.style.top = clamp(e.clientY, 8, innerHeight - h - 10) + 'px';
+  c.querySelectorAll('button').forEach(b => b.onclick = async () => {
+    c.classList.remove('open');
+    const k = b.dataset.k;
+    if (k === 'o') return openColl(x);
+    if (k === 's') { const tx = x.t; navigator.share
+      ? navigator.share({ title: tx, text: 'On Sonora' }).catch(() => { })
+      : (navigator.clipboard && navigator.clipboard.writeText(tx), toast('Copied')); return; }
+    toast('Loading ' + x.t);
+    const list = await collTracks(x);
+    if (!list.length) return toast('Nothing playable in there');
+    if (k === 'p') { play(list, 0); }
+    else if (k === 'n') { S.queue.splice(S.idx + 1, 0, ...list); counts(); toast(list.length + ' queued next'); }
+    else if (k === 'q') { S.queue.push(...list); counts(); toast(list.length + ' added'); }
+    else if (k === 'f') { addManyToPl(list, x.t); }
+    else if (k === 'm') { list.slice(0, 40).forEach(roomAdd); toast('Sent to the room'); }
+  });
+}
+function collToPl(x) {
+  toast('Loading ' + x.t);
+  collTracks(x).then(list => list.length ? addManyToPl(list, x.t) : toast('Nothing playable in there'));
+}
 
 function rowList(list, onDel, opt) {
   const w = el('div', 'rows');
@@ -1120,6 +1258,8 @@ async function vHome(v) {
       <div class="gsR">
         <a class="gsBtn" id="gsGo" href="#">Download</a>
         <button class="gsAll" id="gsAll">All platforms</button>
+        <button class="gsX" id="gsX" title="Dismiss" aria-label="Dismiss">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
     </div>
     <div class="eqmini"><i></i><i></i><i></i><i></i><i></i></div>`);
@@ -1149,7 +1289,17 @@ async function vHome(v) {
       ios: '<svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.4"/><path d="M11 18.6h2"/></svg>'
     };
     const ico = $('#gsIco'); if (ico) ico.innerHTML = ICO[mine] || ICO.linux;
+    /* Dismissable, and it stays dismissed. A download banner that reappears
+       on every visit after you have said no is just nagging — and if you
+       already installed the app you will never want it again. */
+    if (LS('gsOff', 0)) return;
     strip.hidden = false;
+    const xb = $('#gsX');
+    if (xb) xb.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      strip.hidden = true; SET('gsOff', Date.now());
+      toast('Hidden. The Get the App page still has every build.');
+    };
     const all = $('#gsAll'); if (all) all.onclick = () => nav('get');
 
     /* Everything below runs after an await, by which point the visitor may
@@ -1468,6 +1618,8 @@ function vPrefs(v) {
     toggle(S.wid, on => { S.wid = on; SET('wid', on); render(); }));
   if (S.wid) WIDGETS.forEach(([k, n, d]) =>
     row(g, n, d, toggle(widOn(k), () => widToggle(k))));
+  row(g, 'Phone home screen', 'Shortcuts straight to trending, liked, search and rooms',
+    btn('How', () => homeScreenHelp(), 1));
 
   g = group('Playback', 'How Sonora sounds and behaves');
   row(g, 'Streaming quality', QUAL.find(x => x.v === S.q).n + ' · ' + S.q + ' kbps', btn('Change', () => openPan('#qPan'), 1));
@@ -1818,26 +1970,10 @@ async function vGet(v) {
       .forEach(([t, d2], i) => how.appendChild(el('div', 'step4', `<b><i>${i + 1}</i>${esc(t)}</b><span>${esc(d2)}</span>`)));
     v.appendChild(how);
 
+    /* The update source is baked in and deliberately not editable.
+       A field that repoints the app at any URL is a way to hand someone
+       a link that turns their copy into something else entirely. */
     const adv = el('div', 'chips');
-    const chg = el('button', 'chip', 'Change source');
-    chg.onclick = () => modal(`<h3>Update source</h3>
-      <div class="sb2">The raw address of the folder holding version.json. Leave blank to use the one built in.</div>
-      <input class="inp" id="srcIn" placeholder="https://raw.githubusercontent.com/user/repo/main/">
-      <div class="twobtn"><button class="wb" id="srcNo" style="margin:0">Cancel</button>
-      <button class="wb pri" id="srcYes" style="margin:0">Save</button></div>`, async () => {
-        try { const i = await api(statusURL, { cache: false, tries: 0 }); $('#srcIn').value = i.source || ''; } catch (e) { }
-        $('#srcNo').onclick = closeM;
-        $('#srcYes').onclick = async () => {
-          const u = $('#srcIn').value.trim();
-          closeM();
-          try {
-            await api((native ? '/api/update/source?url=' : '/api/selfupdate/source?url=') + encodeURIComponent(u), { cache: false, tries: 0 });
-            toast('Update source saved');
-            paint(await api(statusURL, { cache: false, tries: 0 }));
-          } catch (e) { toast('Could not save'); }
-        };
-      });
-    adv.appendChild(chg);
     const rb = el('button', 'chip', 'Roll back');
     rb.onclick = () => askConfirm('Roll back this update?',
       'Sonora returns to the last version that was known to work. Your library is not touched.',
@@ -3192,8 +3328,17 @@ if ('mediaSession' in navigator) try {
   navigator.mediaSession.setActionHandler('pause', () => au.pause());
   navigator.mediaSession.setActionHandler('nexttrack', () => skip(false));
   navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
-  navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime != null) au.currentTime = d.seekTime; });
+  navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime != null) { au.currentTime = d.seekTime; mediaPos(); } });
+  // the two skip buttons Android puts on the notification when they exist
+  navigator.mediaSession.setActionHandler('seekbackward', d => { seekBy(-(d && d.seekOffset || 10)); mediaPos(); });
+  navigator.mediaSession.setActionHandler('seekforward', d => { seekBy(d && d.seekOffset || 10); mediaPos(); });
+  navigator.mediaSession.setActionHandler('stop', () => { au.pause(); mediaState(); });
 } catch (e) { }
+// mirror real playback state to the lock screen and the notification shelf
+['play', 'pause', 'ratechange'].forEach(ev => au.addEventListener(ev, mediaState));
+au.addEventListener('loadedmetadata', mediaPos);
+au.addEventListener('seeked', mediaPos);
+setInterval(() => { if (!au.paused && !document.hidden) mediaPos(); }, 5000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !S.room) return;
   pullRoom();
@@ -3292,7 +3437,19 @@ setTimeout(() => {
   }
   setTimeout(() => $('#boot').classList.add('gone'), 2500);
 }, 5000);
-beat(); liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 30000);
+/* The listener count polled every 30 seconds and only on a timer, so it could
+   sit stale for half a minute, and coming back to the tab showed whatever it
+   had last seen. Poll faster while the page is in front of you, back off when
+   it is not, and refresh immediately on the events that change the number:
+   returning to the tab, starting or stopping playback, changing track. */
+function liveTick() {
+  clearInterval(liveTimer);
+  liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 12000);
+}
+beat(); liveTick();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { beat(); liveTick(); } });
+addEventListener('online', () => beat());
+['play', 'pause', 'ended'].forEach(ev => au.addEventListener(ev, () => setTimeout(beat, 220)));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
 addEventListener('online', () => { setNet(false); MEM.clear(); netFails = 0; render(); });
 addEventListener('offline', () => setNet(true, 'You are offline'));
@@ -3306,3 +3463,23 @@ if (S.room && !S.es) {
 }
 const rp = new URLSearchParams(location.search).get('room');
 if (rp) setTimeout(() => askJoin(rp), 700);
+
+/* Home screen shortcuts. Long-pressing the installed icon on Android, or
+   right-clicking it on Windows, offers these four; each one lands here with
+   ?go= and jumps straight to that part of the app. The parameter is cleared
+   afterwards so a refresh does not repeat the action. */
+{
+  const go = new URLSearchParams(location.search).get('go');
+  if (go) {
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => {
+      if (go === 'play') {
+        api('/api/home?lang=' + S.lang)
+          .then(d => { const t = (d.trending || []).filter(x => x.u); t.length ? play(t, 0) : nav('trend'); })
+          .catch(() => nav('trend'));
+      } else if (go === 'search') { nav('search'); const q = $('#q'); if (q) q.focus(); }
+      else if (go === 'liked') nav('liked');
+      else if (go === 'room') nav('room');
+    }, 450);
+  }
+}

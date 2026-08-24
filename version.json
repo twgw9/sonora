@@ -1,7 +1,7 @@
 {
-  "version": 6,
+  "version": 7,
   "minApk": 1,
-  "notes": "Lyrics from two sources with synced timings, 3x bigger search, card menus and playlist buttons, glass theme, optional home widgets, lock screen controls, faster listener count",
+  "notes": "Phone layout rebuilt, card menus on every card, dismissable download strip, home screen shortcuts, widgets off by default",
   "date": "2026-08-24",
   "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
   "repo": "https://github.com/twgw9/sonora"

@@ -214,7 +214,7 @@ input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radiu
 .tb:hover{color:var(--tx)}
 .tb:active{transform:scale(.95)}
 .tb.on{background:var(--grad);color:var(--acd);box-shadow:var(--glow)}
-.sg{position:absolute;top:48px;left:0;right:0;background:var(--bg2);border:1px solid var(--line);border-radius:17px;box-shadow:var(--sh);overflow:hidden;display:none;z-index:50;max-height:min(430px,60vh);overflow-y:auto}
+.sg{position:absolute;top:48px;left:0;right:0;background:var(--bg2);border:1px solid var(--line);border-radius:17px;box-shadow:var(--sh);overflow-y:auto;overflow-x:hidden;display:none;z-index:70;max-height:min(430px,58vh);overscroll-behavior:contain}
 .sg.open{display:block;animation:pop .22s var(--ease)}
 .sgi{display:flex;gap:11px;align-items:center;padding:9px 13px;cursor:pointer;transition:background .12s}
 .sgi:hover,.sgi.sel{background:var(--el2)}
@@ -1078,9 +1078,12 @@ body.buffering .mini .mpl{animation:bufpulse 1.1s ease-in-out infinite}
    A phone has no right-click, so the overflow menu had to become visible.
    These sit over the artwork, stay quiet until the card is touched or
    hovered, and never trigger playback. */
-.cact{position:absolute;top:8px;right:8px;z-index:3;display:flex;gap:6px;
-  opacity:0;transform:translateY(-4px);transition:opacity .18s var(--ease),transform .18s var(--ease)}
-.cd:hover .cact,.cd:focus-within .cact{opacity:1;transform:none}
+/* Visible at rest, not only on hover: on a phone there is no hover, and even
+   on a desktop an action you cannot see is an action nobody finds. They sit
+   at a low opacity so the artwork still leads, and come up to full on hover. */
+.cact{position:absolute;top:7px;right:7px;z-index:3;display:flex;gap:5px;
+  opacity:.82;transition:opacity .18s var(--ease)}
+.cd:hover .cact,.cd:focus-within .cact{opacity:1}
 .ca{width:30px;height:30px;display:grid;place-items:center;border:0;cursor:pointer;
   border-radius:9px;background:rgba(10,12,14,.72);color:#fff;
   -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
@@ -1089,10 +1092,12 @@ body.buffering .mini .mpl{animation:bufpulse 1.1s ease-in-out infinite}
 .ca:hover{background:var(--ac);color:var(--acd);transform:scale(1.08)}
 .ca:active{transform:scale(.94)}
 .ca:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
-/* touch screens cannot hover, so keep them permanently visible but subtle */
-@media (hover:none){
-  .cact{opacity:.9;transform:none}
-  .ca{width:32px;height:32px}
+@media (hover:none){ .cact{opacity:.92} }
+/* smaller taps on a phone so they do not cover the art */
+@media(max-width:900px){
+  .cact{top:5px;right:5px;gap:4px}
+  .ca{width:27px;height:27px;border-radius:8px}
+  .ca svg{width:13px;height:13px}
 }
 body[data-d="list"] .cact{display:none}
 
@@ -1188,3 +1193,69 @@ body[data-t="paper"].glass{--gl-bd:color-mix(in srgb,#000 9%,transparent)}
    settings row rather than an advert. */
 .tgrow{border-color:color-mix(in srgb,var(--ac) 32%,var(--line))}
 .tgbtn{text-decoration:none;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+
+/* ---------- search on a phone ----------
+   The box shares the top bar with five other controls, so at phone widths it
+   was squeezed down to a sliver and the placeholder was cut in half. Give it
+   the row to itself and let the suggestion list use the full width. */
+@media(max-width:900px){
+  .bar{flex-wrap:wrap;row-gap:8px}
+  .srch{order:10;flex:1 1 100%;max-width:none;min-width:0}
+  .srch input{font-size:16px}          /* under 16px iOS zooms the whole page */
+  .sg{top:46px;max-height:min(420px,52vh)}
+  .sgi{padding:11px 13px}              /* a comfortable tap target */
+  .sgi img{width:42px;height:42px;flex:0 0 42px}
+}
+@media(max-width:600px){
+  .getbtn span{display:none}           /* icon only, to buy the search box room */
+  .bar{gap:6px;padding-left:10px;padding-right:10px}
+}
+
+/* =========================================================
+   PHONE LAYOUT
+   Three separate rules were setting .grid at the same breakpoint — 44vw,
+   then 42vw, then a bare gap — so which one won depended on source order and
+   the cards ended up far larger than they should be. Two cards per row at
+   42vw leaves almost nothing for the gutters, so a phone showed about four
+   albums per screen and everything else was a scroll away.
+
+   This block is last, so it is the one that applies. Everything here is
+   deliberately tighter than the desktop layout.
+   ========================================================= */
+@media(max-width:900px){
+  .grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:14px 10px}
+  .rail{gap:10px}
+  .rail .cd{flex:0 0 118px}
+  .th{border-radius:12px;box-shadow:0 3px 10px rgba(0,0,0,.26)}
+  .meta2{padding:7px 1px 0}
+  .meta2 h4{font-size:12.5px;line-height:1.25}
+  .meta2 p{font-size:11px;margin-top:1px}
+  /* the hover lift is pointless on a touch screen and costs a repaint */
+  .cd:hover .th{transform:none;box-shadow:0 3px 10px rgba(0,0,0,.26)}
+  .cd:hover .th img{transform:none}
+  .cd:active .th{transform:scale(.97)}
+  h2.h{font-size:16px}
+  .hero{padding:18px 16px}
+  .hero h1{font-size:26px;line-height:1.15}
+  .hero p{font-size:13px}
+  .rows{gap:2px}
+  .rw{padding:7px 9px;gap:9px}
+  .ra{width:38px;height:38px;flex:0 0 38px;border-radius:9px}
+  .rt{font-size:13px}
+  .rs{font-size:11px}
+}
+@media(max-width:420px){
+  .grid{grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:12px 9px}
+  .rail .cd{flex:0 0 108px}
+  .meta2 h4{font-size:12px}
+  .hero h1{font-size:23px}
+}
+
+/* dismiss button on the download strip */
+.gsX{width:28px;height:28px;flex:0 0 28px;display:grid;place-items:center;border:0;
+  border-radius:8px;background:transparent;color:var(--dim);cursor:pointer;
+  transition:background .15s,color .15s}
+.gsX svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2}
+.gsX:hover{background:var(--el2);color:var(--tx)}
+.gsX:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+@media(max-width:600px){ .gsAll{display:none} }
