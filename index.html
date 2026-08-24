@@ -131,6 +131,7 @@ font-size:14.5px;font-weight:800;margin-top:14px;box-shadow:var(--glow)}
     <button class="nav" data-v="recent"><svg viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4v4.5h4.5"/><path d="M12 7.6V12l3 1.8"/></svg> History</button>
     <button class="nav" data-v="dls"><svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg> Downloads</button>
     <button class="nav" data-v="stats"><svg viewBox="0 0 24 24"><path d="M4 20.5V13M9.3 20.5V4M14.7 20.5v-10M20 20.5V8"/></svg> Insights</button>
+    <button class="nav" data-v="get"><svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg> Get the App</button>
     <button class="nav" data-v="legal"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.4M12 7.8h.01"/></svg> About &amp; Legal</button>
     <button class="nav" data-v="prefs"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.2 14.8a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1 2 2 0 1 1-4 0 1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7 2 2 0 1 1 0-4 1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1 2 2 0 1 1 4 0 1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7 2 2 0 1 1 0 4 1.6 1.6 0 0 0-1.4 1z"/></svg> Preferences</button>
 
@@ -151,6 +152,9 @@ font-size:14.5px;font-weight:800;margin-top:14px;box-shadow:var(--glow)}
       <button class="qpill lvl5" id="qBtn" title="Streaming quality">
         <span class="qb"><i></i><i></i><i></i><i></i><i></i></span><b id="qLbl">MAX</b></button>
       <button class="ic" id="eqBtn" title="Equaliser"><svg viewBox="0 0 24 24"><path d="M4 21V14M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1.5 14h5M9.5 8h5M17.5 16h5"/></svg></button>
+      <button class="getbtn" id="getBtn" title="Get the app">
+        <svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg>
+        <span>Get the app</span></button>
       <button class="ic" id="thBtn" title="Appearance"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4a8.6 8.6 0 0 0 0 17.2z"/></svg></button>
     </div>
     <div class="wrap" id="view"></div>
@@ -338,6 +342,7 @@ font-size:14.5px;font-weight:800;margin-top:14px;box-shadow:var(--glow)}
     <button id="cdSend">Send</button></div>
 </div>
 <audio id="au" preload="auto" crossorigin="anonymous" playsinline></audio>
+<script src="desktop-hooks.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,91 @@
+{
+  "name": "sonora-desktop",
+  "productName": "Sonora",
+  "version": "1.0.0",
+  "description": "Sonora \u2014 music player with a real 7-band equaliser, studio sound modes and listening rooms",
+  "main": "main.js",
+  "author": "Sonora",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "build": {
+    "appId": "com.sonora.player",
+    "productName": "Sonora",
+    "directories": {
+      "output": "out",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "web/**/*",
+      "server/**/*",
+      "assets/icon.png",
+      "!**/*.map",
+      "!**/*.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.music"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Audio",
+      "maintainer": "Sonora",
+      "synopsis": "Music player with a real 7-band equaliser",
+      "description": "Sonora \u2014 music player with a real seven-band equaliser, sixteen studio sound modes, offline downloads and synced listening rooms."
+    },
+    "compression": "maximum",
+    "electronVersion": "28.3.3",
+    "electronLanguages": [
+      "en-US"
+    ],
+    "removePackageScripts": true,
+    "removePackageKeywords": true
+  },
+  "devDependencies": {
+    "electron": "28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "homepage": "https://github.com/USER/sonora"
+}

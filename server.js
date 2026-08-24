@@ -16,7 +16,7 @@ const zlib = require('zlib');
 const { URL } = require('url');
 
 const PORT = process.env.PORT || 3000;
-const ROOT = __dirname;
+const ROOT = process.env.SONORA_ROOT || __dirname;
 const DEV = process.env.NODE_ENV !== 'production';
 
 /* ---------- never die ---------- */
@@ -34,6 +34,20 @@ const MIRRORS = [
   'https://saavn.dev/api',
   'https://jiosaavn-api-privatecvc2.vercel.app',
 ];
+
+/* ---------------- download counter ---------------- */
+const DLFILE = () => require('path').join(ROOT, 'downloads.json');
+let dlCounts = (() => { try { return JSON.parse(require('fs').readFileSync(DLFILE(), 'utf8')); }
+  catch (e) { return { total: 0, byOs: {} }; } })();
+let dlDirty = false;
+function bumpDownload(os) {
+  dlCounts.total = (dlCounts.total || 0) + 1;
+  dlCounts.byOs = dlCounts.byOs || {};
+  dlCounts.byOs[os] = (dlCounts.byOs[os] || 0) + 1;
+  dlDirty = true;
+}
+setInterval(() => { if (!dlDirty) return; dlDirty = false;
+  try { require('fs').writeFileSync(DLFILE(), JSON.stringify(dlCounts)); } catch (e) { } }, 15000).unref();
 
 /* ---------- live presence ---------- */
 const live = new Map();                     // id -> {t, song}
@@ -187,14 +201,15 @@ function room(code) {
   code = String(code || '').toUpperCase().slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'LOBBY';
   if (!rooms.has(code)) {
     if (rooms.size >= MAXROOM) { for (const [k, r] of rooms) if (!r.cl.size) { rooms.delete(k); break; } }
-    rooms.set(code, { code, q: [], i: 0, playing: false, at: 0, since: Date.now(), cl: new Set(), chat: [], users: new Map(), host: null, born: Date.now() });
+    rooms.set(code, { code, q: [], i: 0, playing: false, at: 0, since: Date.now(), cl: new Set(), chat: [], users: new Map(), host: null, born: Date.now(), open: false });
   }
   return rooms.get(code);
 }
 const rpos = r => r.playing ? r.at + (Date.now() - r.since) / 1000 : r.at;
 const snap = r => ({ code: r.code, queue: r.q, idx: r.i, playing: r.playing, pos: rpos(r),
   users: [...r.users.entries()].map(([id, u]) => ({ n: u.n, id, host: id === r.host })),
-  host: r.host, chat: r.chat.slice(-50), n: r.users.size });
+  host: r.host, open: !!r.open, chat: r.chat.slice(-50), n: r.users.size,
+  now: Date.now() });                       // server clock, for latency compensation
 function push(r) {
   const s = `event: state\ndata: ${JSON.stringify(snap(r))}\n\n`;
   for (const c of [...r.cl]) { try { if (!c.writableEnded) c.write(s); else r.cl.delete(c); } catch { r.cl.delete(c); } }
@@ -229,6 +244,193 @@ const ipOf = req => (req.headers['x-forwarded-for'] || '').split(',')[0].trim() 
    ROUTES
    ============================================================= */
 const R = {};
+
+/* ---------------- self update from Git ---------------- */
+const OTA_FILES = ['index.html', 'app.js', 'styles.css', 'desktop-hooks.js', 'logo.svg', 'icon.svg'];
+let otaBusy = false;
+
+function otaSource() {
+  const fs2 = require('fs'), path2 = require('path');
+  // 1. an address the user typed in Settings
+  try { const j = JSON.parse(fs2.readFileSync(path2.join(ROOT, 'update.json'), 'utf8'));
+    if (j.source) return j.source; } catch (e) { }
+  // 2. the address release.sh baked into version.json
+  try { const j = JSON.parse(fs2.readFileSync(path2.join(ROOT, 'version.json'), 'utf8'));
+    if (j.source) return j.source; } catch (e) { }
+  // 3. an environment variable, for hosts that prefer config that way
+  if (process.env.SONORA_UPDATE_URL) return process.env.SONORA_UPDATE_URL;
+  // 4. Render hands us the repo it deployed from
+  const rr = process.env.RENDER_GIT_REPO_URL;
+  if (rr) {
+    const slug = String(rr).replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+    const br = process.env.RENDER_GIT_BRANCH || 'main';
+    if (slug && slug.indexOf('/') > 0) return 'https://raw.githubusercontent.com/' + slug + '/' + br + '/';
+  }
+  return '';
+}
+function otaSaveSource(u) {
+  try { require('fs').writeFileSync(require('path').join(ROOT, 'update.json'),
+    JSON.stringify({ source: u }, null, 2)); return true; } catch (e) { return false; }
+}
+function localVersion() {
+  try { return JSON.parse(require('fs').readFileSync(require('path').join(ROOT, 'version.json'), 'utf8')).version || 0; }
+  catch (e) { return 0; }
+}
+
+let otaLast = { at: 0, msg: '' };
+R['/api/selfupdate/status'] = async () => ({
+  version: localVersion(), source: otaSource(), busy: otaBusy,
+  canUpdate: !!otaSource(), auto: !!otaSource(),
+  lastMsg: otaLast.msg, lastAt: otaLast.at
+});
+
+R['/api/selfupdate/source'] = async q => {
+  let u = String(q.get('url') || '').trim();
+  if (u && !u.endsWith('/')) u += '/';
+  otaSaveSource(u);
+  return { ok: true, source: otaSource() };
+};
+
+R['/api/selfupdate/run'] = async q => {
+  const base = otaSource();
+  if (!base) return { ok: false, msg: 'No update source set' };
+  if (otaBusy) return { ok: false, msg: 'Already updating' };
+  otaBusy = true;
+  const fs2 = require('fs'), path2 = require('path');
+  try {
+    const bust = '?t=' + Date.now();
+    const metaRaw = await jget(base + 'version.json' + bust, { timeout: 9000, tries: 1, headers: { 'User-Agent': UA } })
+      .catch(() => null);
+    const remote = metaRaw && +metaRaw.version || 0;
+    const force = q.get('force') === '1';
+    if (!remote) { otaBusy = false; return { ok: false, msg: 'Could not read version.json at that address' }; }
+    if (!force && remote <= localVersion()) { otaBusy = false; return { ok: true, msg: 'Already up to date', version: remote }; }
+
+    // fetch everything into memory first
+    const got = {};
+    for (const f of OTA_FILES) {
+      const r = await fetch(base + f + bust, { headers: { 'User-Agent': UA } }).catch(() => null);
+      if (!r || !r.ok) { if (f === 'logo.svg' || f === 'icon.svg' || f === 'desktop-hooks.js') continue;
+        otaBusy = false; return { ok: false, msg: 'Download failed: ' + f }; }
+      got[f] = Buffer.from(await r.arrayBuffer());
+    }
+    if (!got['index.html'] || got['index.html'].length < 500 ||
+        !got['app.js'] || got['app.js'].length < 5000) {
+      otaBusy = false; return { ok: false, msg: 'The update looked corrupt, nothing was changed' };
+    }
+    // keep a rollback copy once
+    const bak = path2.join(ROOT, '.backup');
+    if (!fs2.existsSync(bak)) {
+      fs2.mkdirSync(bak, { recursive: true });
+      OTA_FILES.forEach(f => { try { fs2.copyFileSync(path2.join(ROOT, f), path2.join(bak, f)); } catch (e) { } });
+    }
+    Object.entries(got).forEach(([f, buf]) => fs2.writeFileSync(path2.join(ROOT, f), buf));
+    try { fs2.writeFileSync(path2.join(ROOT, 'version.json'), JSON.stringify(metaRaw, null, 2)); } catch (e) { }
+    files.clear();                                   // drop the static cache
+    otaBusy = false;
+    otaLast = { at: Date.now(), msg: 'Updated to v' + remote };
+    return { ok: true, msg: 'Updated to v' + remote, version: remote, reload: true,
+             notes: metaRaw.notes || '' };
+  } catch (e) {
+    otaBusy = false;
+    return { ok: false, msg: 'Update failed: ' + String(e && e.message) };
+  }
+};
+
+R['/api/selfupdate/rollback'] = async () => {
+  const fs2 = require('fs'), path2 = require('path');
+  const bak = path2.join(ROOT, '.backup');
+  if (!fs2.existsSync(bak)) return { ok: false, msg: 'No backup to restore' };
+  let n = 0;
+  OTA_FILES.forEach(f => { try { const src = path2.join(bak, f);
+    if (fs2.existsSync(src)) { fs2.copyFileSync(src, path2.join(ROOT, f)); n++; } } catch (e) { } });
+  files.clear();
+  return { ok: true, msg: 'Restored ' + n + ' files', reload: true };
+};
+
+/* GitHub Releases fallback.
+   The desktop installers are 60-90 MB each, which is too big to keep in git.
+   They are uploaded to a GitHub Release instead, so a deploy that has no
+   downloads/ folder still offers every platform. Cached for an hour. */
+let ghRel = { at: 0, assets: null };
+function repoSlug() {
+  const src = String(otaSource() || process.env.RENDER_GIT_REPO_URL || '');
+  const m = src.match(/raw\.githubusercontent\.com\/([^/]+\/[^/]+)/) ||
+            src.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?(?:\/|$)/);
+  return m ? m[1] : null;
+}
+async function ghAssets() {
+  if (ghRel.assets && Date.now() - ghRel.at < 3600e3) return ghRel.assets;
+  const slug = repoSlug();
+  if (!slug) { ghRel = { at: Date.now(), assets: [] }; return []; }
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 6000);
+    const r = await fetch('https://api.github.com/repos/' + slug + '/releases/latest',
+      { signal: c.signal, headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Sonora' } });
+    clearTimeout(t);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    const assets = (j.assets || []).map(a => ({
+      name: a.name, url: a.browser_download_url, size: a.size
+    }));
+    ghRel = { at: Date.now(), assets };
+    return assets;
+  } catch (e) {
+    // remember the failure briefly so a dead network does not stall every request
+    ghRel = { at: Date.now() - 3000e3, assets: ghRel.assets || [] };
+    return ghRel.assets || [];
+  }
+}
+
+R['/api/downloads'] = async () => {
+  const fs2 = require('fs'), path2 = require('path');
+  const pick = (dir, match) => {
+    try {
+      const d = path2.join(ROOT, dir);
+      const f = fs2.readdirSync(d).filter(x => match.test(x))
+        .map(x => ({ f: x, s: fs2.statSync(path2.join(d, x)).size }))
+        .sort((a, b) => b.s - a.s)[0];
+      return f ? { file: dir + '/' + f.f, size: f.s } : null;
+    } catch (e) { return null; }
+  };
+  const mb = n => n ? (n / 1048576).toFixed(1) + ' MB' : '';
+  // 'downloads' persists; 'dist' is stripped from snapshots by the sandbox
+  const D = 'downloads';
+
+  // A local file always wins. If there is none, fall back to the matching
+  // asset on the latest GitHub Release, so a deploy without the big binaries
+  // still offers every platform.
+  const rel = await ghAssets();
+  const fromGH = match => {
+    const a = rel.filter(x => match.test(x.name)).sort((x, y) => y.size - x.size)[0];
+    return a ? { file: a.url, size: a.size, remote: true } : null;
+  };
+  const at = (local, match) => local || fromGH(match);
+
+  const android = at(pick('apk', /^Sonora\.apk$/) || pick(D, /\.apk$/i), /\.apk$/i);
+  const win = at(pick(D, /Setup.*\.exe$/i) || pick(D, /\.exe$/i) || pick('dist', /Setup.*\.exe$/i), /\.exe$/i);
+  const linuxApp = at(pick(D, /\.AppImage$/i) || pick('dist', /\.AppImage$/i), /\.AppImage$/i);
+  const linuxDeb = at(pick(D, /\.deb$/i) || pick('dist', /\.deb$/i), /\.deb$/i);
+  const mac = at(pick(D, /\.dmg$/i) || pick('dist', /\.dmg$/i) || pick(D, /mac.*\.zip$/i), /\.dmg$|mac.*\.zip$/i);
+
+  // a local build is served from this host; a release asset is an absolute URL
+  const href = b => b.remote ? b.file : '/' + b.file;
+  const out = { builds: [] };
+  if (android) out.builds.push({ os: 'android', label: 'Android', note: 'Android 7.0 or newer',
+    file: href(android), size: mb(android.size), ext: 'APK' });
+  if (win) out.builds.push({ os: 'windows', label: 'Windows', note: 'Windows 10 and 11, 64-bit',
+    file: href(win), size: mb(win.size), ext: /\.exe$/i.test(win.file) ? 'Installer' : 'ZIP' });
+  if (mac) out.builds.push({ os: 'mac', label: 'macOS', note: /\.dmg$/i.test(mac.file) ? 'Intel and Apple silicon' : 'Intel Macs and Apple silicon via Rosetta',
+    file: href(mac), size: mb(mac.size), ext: /\.dmg$/i.test(mac.file) ? 'DMG' : 'ZIP' });
+  if (linuxApp) out.builds.push({ os: 'linux', label: 'Linux', note: 'AppImage, runs anywhere',
+    file: href(linuxApp), size: mb(linuxApp.size), ext: 'AppImage' });
+  if (linuxDeb) out.builds.push({ os: 'linux-deb', label: 'Linux (deb)', note: 'Debian, Ubuntu, Mint',
+    file: href(linuxDeb), size: mb(linuxDeb.size), ext: 'DEB' });
+  out.installs = dlCounts.total || 0;
+  out.byOs = dlCounts.byOs || {};
+  return out;
+};
 
 R['/api/health'] = async () => ({ ok: true, uptime: Math.round((Date.now() - M.up) / 1000), req: M.req, hits: M.hit, miss: M.miss, err: M.err, streams: M.stream, cache: cache.size, rooms: rooms.size, mem: Math.round(process.memoryUsage().rss / 1048576) + 'MB' });
 
@@ -416,7 +618,7 @@ R['/api/room/peek'] = async q => {
   const c = String(q.get('c') || '').toUpperCase();
   const r = rooms.get(c);
   if (!r) return { exists: false, code: c };
-  return { exists: true, code: c, n: r.users.size, tracks: r.q.length,
+  return { exists: true, code: c, n: r.users.size, tracks: r.q.length, open: !!r.open,
     now: r.q[r.i] ? { t: r.q[r.i].t, a: r.q[r.i].a, img: r.q[r.i].img } : null,
     users: [...r.users.values()].map(u => u.n).slice(0, 8) };
 };
@@ -429,7 +631,8 @@ R['/api/room/act'] = async (q, req) => {
   const known = r.users.has(uid);
   r.users.set(uid, { n: name, t: Date.now() });
   if (!r.host || !r.users.has(r.host)) r.host = uid;          // first in becomes host
-  const isHost = r.host === uid;
+  const isHost = r.host === uid || r.open === true;
+  const isRealHost = r.host === uid;
   const parse = () => { try { return JSON.parse(q.get('v')); } catch { return null; } };
 
   if (a === 'join') { if (!known) sysMsg(r, name + ' joined the room'); }
@@ -441,17 +644,17 @@ R['/api/room/act'] = async (q, req) => {
   else if (a === 'idx') { if (isHost) { r.i = clampI(+q.get('v'), r.q.length); r.at = 0; r.since = Date.now(); r.playing = true; } }
   else if (a === 'jump') { r.i = clampI(+q.get('v'), r.q.length); r.at = 0; r.since = Date.now(); r.playing = true;
     sysMsg(r, name + ' jumped to track ' + (r.i + 1)); }
-  else if (a === 'queue') { const j = parse(); if (Array.isArray(j)) { r.q = j.slice(0, 100); r.i = 0; r.at = 0;
+  else if (a === 'queue') { const j = parse(); if (Array.isArray(j)) { j.forEach(x => { if (x) x.by = name; }); r.q = j.slice(0, 100); r.i = 0; r.at = 0;
     r.since = Date.now(); r.playing = true; sysMsg(r, name + ' shared ' + r.q.length + ' tracks'); } }
   else if (a === 'playnow') { const j = parse(); if (j && j.id) {
       const ex = r.q.findIndex(x => x.id === j.id);
-      if (ex >= 0) r.i = ex; else { r.q.splice(r.i + 1, 0, j); r.i = clampI(r.i + 1, r.q.length); }
+      if (ex >= 0) r.i = ex; else { j.by = name; r.q.splice(r.i + 1, 0, j); r.i = clampI(r.i + 1, r.q.length); }
       r.at = 0; r.since = Date.now(); r.playing = true;
       sysMsg(r, name + ' started ' + String(j.t || 'a track').slice(0, 40)); } }
   else if (a === 'add') { const j = parse(); if (j && j.id && r.q.length < 250) {
-    if (!r.q.some(x => x.id === j.id)) { r.q.push(j); sysMsg(r, name + ' added ' + String(j.t || 'a track').slice(0, 40)); } } }
+    if (!r.q.some(x => x.id === j.id)) { j.by = name; r.q.push(j); sysMsg(r, name + ' added ' + String(j.t || 'a track').slice(0, 40)); } } }
   else if (a === 'addmany') { const j = parse(); if (Array.isArray(j)) { let n = 0;
-    j.slice(0, 60).forEach(x => { if (x && x.id && r.q.length < 250 && !r.q.some(y => y.id === x.id)) { r.q.push(x); n++; } });
+    j.slice(0, 60).forEach(x => { if (x && x.id && r.q.length < 250 && !r.q.some(y => y.id === x.id)) { x.by = name; r.q.push(x); n++; } });
     if (n) sysMsg(r, name + ' added ' + n + ' tracks'); } }
   else if (a === 'rm') { const i = +q.get('v'); if (i >= 0 && i < r.q.length) { const g = r.q.splice(i, 1)[0];
     if (i < r.i) r.i--; else if (i === r.i) { r.at = 0; r.since = Date.now(); }
@@ -459,8 +662,11 @@ R['/api/room/act'] = async (q, req) => {
   else if (a === 'clear') { r.q = []; r.i = 0; r.at = 0; r.playing = false; sysMsg(r, name + ' cleared the queue'); }
   else if (a === 'next') { if (r.q.length) { r.i = clampI(r.i + 1, r.q.length); r.at = 0; r.since = Date.now(); r.playing = true; } }
   else if (a === 'prev') { if (r.q.length) { r.i = clampI(r.i - 1, r.q.length); r.at = 0; r.since = Date.now(); r.playing = true; } }
-  else if (a === 'host') { const t = String(q.get('v') || ''); if (isHost && r.users.has(t)) { r.host = t;
-    sysMsg(r, (r.users.get(t)?.n || 'Someone') + ' is now host'); } }
+  else if (a === 'host') { const t = String(q.get('v') || ''); if (isRealHost && r.users.has(t)) { r.host = t;
+    sysMsg(r, (r.users.get(t)?.n || 'Someone') + ' is now the host'); } }
+  else if (a === 'claim') { if (!r.host || !r.users.has(r.host)) { r.host = uid; sysMsg(r, name + ' took over as host'); } }
+  else if (a === 'open') { if (isRealHost) { r.open = q.get('v') === '1';
+    sysMsg(r, r.open ? 'Everyone can control playback now' : 'Only the host controls playback now'); } }
   else if (a === 'chat') { const m = String(q.get('v') || '').slice(0, 220);
     if (m) { r.chat.push({ u: name, m, t: Date.now() }); r.chat = r.chat.slice(-70); } }
   push(r); return snap(r);
@@ -533,8 +739,26 @@ function loadFile(f) {
     c = { raw: buf, gz: zlib.gzipSync(buf, { level: 8 }), br: null, mtime: st.mtimeMs,
       mime: MIME[path.extname(f)] || 'application/octet-stream',
       et: '"' + crypto.createHash('sha1').update(buf).digest('base64url').slice(0, 20) + '"' };
+    /* Compress twice. Quality 6 is ready in a few milliseconds so the first
+       visitor is never made to wait, then quality 11 is built in the
+       background and swapped in for everyone after. It is about 10 % smaller
+       across app.js, styles.css and index.html — roughly 8 KB off every cold
+       load — and costs a third of a second, once, off the request path. */
     try { c.br = zlib.brotliCompressSync(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6 } }); } catch { }
-    files.set(f, c); return c;
+    files.set(f, c);
+    if (!c.brBest) {
+      const target = c;
+      setTimeout(() => {
+        try {
+          const best = zlib.brotliCompressSync(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } });
+          // only if this cache entry is still the live one for that file
+          if (files.get(f) === target && best.length < target.br.length) {
+            target.br = best; target.brBest = true;
+          }
+        } catch { }
+      }, 0).unref?.();
+    }
+    return c;
   } catch { return null; }
 }
 function sendFile(req, res, f, immutable) {
@@ -596,6 +820,32 @@ const server = http.createServer(async (req, res) => {
     }
     if (p.startsWith('/api/')) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"not found"}'); }
 
+    // downloadable builds
+    if (/^\/(apk|dist|downloads)\//.test(p) || /^\/Sonora-(source|apps)\.zip$/.test(p)) {
+      const path3 = require('path'), fs3 = require('fs');
+      const rel = decodeURIComponent(p).replace(/\.\./g, '').replace(/^\//, '');
+      const file = path3.join(ROOT, rel);
+      if (file.startsWith(ROOT) && fs3.existsSync(file) && fs3.statSync(file).isFile()) {
+        const st = fs3.statSync(file);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': st.size,
+          'Content-Disposition': 'attachment; filename="' + path3.basename(file) + '"',
+          'Cache-Control': 'public, max-age=3600',
+          'Access-Control-Allow-Origin': '*'
+        });
+        if (req.method === 'HEAD') return res.end();
+        const nm = path3.basename(file).toLowerCase();
+        bumpDownload(/\.apk$/.test(nm) ? 'android'
+          : /\.exe$/.test(nm) ? 'windows'
+          : /\.dmg$/.test(nm) || /mac.*\.zip$/.test(nm) ? 'mac'
+          : /\.appimage$/.test(nm) ? 'linux'
+          : /\.deb$/.test(nm) ? 'linux-deb' : 'other');
+        return fs3.createReadStream(file).pipe(res);
+      }
+      res.writeHead(404); return res.end('not built yet');
+    }
+
     const clean = decodeURIComponent(p).replace(/\0/g, '');
     if (clean.includes('..')) { res.writeHead(403); return res.end(); }
     const f = path.join(ROOT, clean === '/' ? 'index.html' : clean);
@@ -627,5 +877,14 @@ server.timeout = 0;
    the instance warm without burning quota. Set KEEPALIVE_URL in Render env. */
 const KA = process.env.KEEPALIVE_URL || process.env.RENDER_EXTERNAL_URL;
 if (KA) setInterval(() => { fetch(KA.replace(/\/$/, '') + '/healthz').catch(() => { }); }, 6e5).unref();
+
+function otaTick(tag) {
+  if (!otaSource()) return;
+  R['/api/selfupdate/run'](new URLSearchParams())
+    .then(r => { if (r && r.ok && r.reload) console.log('[ota] ' + tag + ': ' + r.msg); })
+    .catch(() => { });
+}
+setTimeout(() => otaTick('boot'), 8000).unref?.();
+setInterval(() => otaTick('scheduled'), 30 * 60 * 1000).unref?.();
 
 server.listen(PORT, '0.0.0.0', () => console.log('Sonora v5 on :' + PORT + (KA ? ' (keepalive on)' : '')));

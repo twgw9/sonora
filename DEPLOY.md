@@ -7,16 +7,24 @@ To get a link you can send to friends, deploy to Render. It is free.
 
 ## Step 1 — Put the code on GitHub
 
-1. Go to <https://github.com/new>
-2. Repository name: `sonora` · choose **Private** · click **Create repository**
-3. On the next screen click **uploading an existing file**
-4. Drag in **all** of these files, then click **Commit changes**:
+The repository is already initialised and committed, so this is one push.
 
+```bash
+cd sonora
+git remote add origin https://github.com/YOURNAME/sonora.git
+git push -u origin main
 ```
-app.js        index.html    render.yaml   sw.js
-icon.svg      logo.svg      robots.txt    package.json
-server.js     start.js      styles.css    manifest.webmanifest
-```
+
+If GitHub asks for a password, it wants a token, not your account password:
+<https://github.com/settings/tokens> → **Generate new token (classic)** → tick
+**repo** → paste the token as the password.
+
+The repo is 54 files and about 3 MB. Two things are deliberately left out:
+
+- **`apk/sonora-signing.jks`** — the Android signing key. Anyone who has it can
+  sign a fake Sonora update that installs over yours. Back it up privately.
+- **The desktop installers** — 60 to 90 MB each. GitHub warns above 50 MB and
+  refuses above 100 MB, so they go to a Release instead. See Step 3.
 
 ## Step 2 — Deploy on Render
 
@@ -47,6 +55,34 @@ https://sonora-xxxx.onrender.com
 ```
 
 That is the link to share. It works on any phone or computer, anywhere.
+
+## Step 4 — Put the desktop installers on the site
+
+Straight after deploying, the Get the App page will offer **Android only**. The
+Windows, macOS and Linux builds are too large to live in the repository, so
+they are uploaded to a GitHub Release and the server links to them from there.
+
+```bash
+cd desktop && ./build.sh     # builds Windows, macOS and Linux
+cd .. && ./publish.sh        # uploads them to a GitHub Release
+```
+
+`publish.sh` needs the GitHub CLI, signed in once with `gh auth login`.
+
+Nothing else to configure. `server.js` reads the repository address out of
+`version.json`, asks GitHub for the latest release, and lists whichever assets
+it finds. The page updates itself within the hour, or instantly on redeploy.
+
+A local file always wins over a release asset, so a machine that has actually
+built the installers serves its own copies.
+
+### Why not just commit the installers
+
+GitHub warns on any file above 50 MB and hard-refuses above 100 MB. The Windows
+installer is 67 MB, macOS 91 MB, the AppImage 71 MB and the deb 64 MB — 293 MB
+in total, and a fresh copy every release. That would grow the repository past a
+gigabyte in a handful of versions, and git never forgets a blob. Releases are
+built for exactly this and do not count against repository size.
 
 ---
 

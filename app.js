@@ -5,7 +5,7 @@
 /* Build fingerprint. If the browser is running an older bundle than the server
    serves, every cache and service worker is destroyed and the page reloads once.
    This is what makes "I don't see the changes" impossible. */
-const BUILD = 'v17-2026-08-22';
+const BUILD = 'v31-2026-08-24';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -25,11 +25,35 @@ const el = (t, c, h) => { const e = document.createElement(t); if (c) e.classNam
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = s => (!s || !isFinite(s) || s < 0) ? '0:00' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const nf = n => n >= 1e7 ? (n / 1e7).toFixed(1) + ' Cr' : n >= 1e5 ? (n / 1e5).toFixed(1) + ' L' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : (n || '');
-const LS = (k, d) => { try { const v = localStorage.getItem('sn_' + k); return v === null ? d : JSON.parse(v); } catch { return d; } };
+const LS = (k, d) => { try { const v = localStorage.getItem('sn_' + k);
+  if (v === null) return d;
+  const p = JSON.parse(v);
+  if (Array.isArray(d) && !Array.isArray(p)) return d;                       // expected a list
+  if (d && typeof d === 'object' && !Array.isArray(d) && (typeof p !== 'object' || p === null || Array.isArray(p))) return d;
+  if (typeof d === 'number' && typeof p !== 'number') return d;
+  if (typeof d === 'boolean' && typeof p !== 'boolean') return d;
+  if (typeof d === 'string' && typeof p !== 'string') return d;
+  return p;
+} catch { return d; } };
 const SET = (k, v) => { try { localStorage.setItem('sn_' + k, JSON.stringify(v)); } catch (e) { } };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const uniqById = a => { const seen = new Set(); return (a || []).filter(x => x && x.id && !seen.has(x.id) && seen.add(x.id)); };
+/* The CDN serves 50, 150 and 500 px squares. A 150px card pulling the 500px
+   file wastes 90 KB every time, which on a phone is most of the page weight.
+   These helpers ask for the size that is actually going to be shown. */
+const imgAt = (u, px) => {
+  if (!u) return '';
+  const want = px <= 60 ? '50x50' : px <= 220 ? '150x150' : '500x500';
+  return u.replace(/(50x50|150x150|500x500)/, want);
+};
+const imgSet = (u, px) => {
+  if (!u) return '';
+  const one = imgAt(u, px);
+  const two = imgAt(u, px * 2);
+  return one === two ? '' : `${one} 1x, ${two} 2x`;
+};
+const uniqById = a => { if (!Array.isArray(a)) return []; const seen = new Set();
+  return a.filter(x => x && typeof x === 'object' && x.id && !seen.has(x.id) && seen.add(x.id)); };
 
 let tT; function toast(m) { $('#toastT').textContent = m; const t = $('#toast'); t.classList.add('show'); clearTimeout(tT); tT = setTimeout(() => t.classList.remove('show'), 2500); }
 const buzz = n => { try { navigator.vibrate && navigator.vibrate(n || 8); } catch (e) { } };
@@ -40,10 +64,14 @@ function memSet(k, d) { if (MEM.size > 120) MEM.delete(MEM.keys().next().value);
 function diskGet(k) { try { const v = JSON.parse(sessionStorage.getItem('sc_' + k) || 'null'); return v && v.d; } catch { return null; } }
 function diskSet(k, d) { try { sessionStorage.setItem('sc_' + k, JSON.stringify({ t: Date.now(), d })); } catch { } }
 
-let netDown = false;
+let netDown = false, netFails = 0;
+let netQueued = null;
 function setNet(down, msg) {
   netDown = down;
-  const b = $('#netbar'); if (!b) return;
+  if (!down) netFails = 0;
+  const b = $('#netbar');
+  if (!b) { netQueued = [down, msg]; return; }   // called before the DOM was ready
+  if (netQueued) netQueued = null;
   if (down) { $('#netTxt').textContent = msg || 'Connection lost — retrying'; b.classList.remove('ok'); b.classList.add('show'); }
   else if (b.classList.contains('show')) { $('#netTxt').textContent = 'Back online'; b.classList.add('ok');
     setTimeout(() => b.classList.remove('show'), 1800); }
@@ -51,6 +79,12 @@ function setNet(down, msg) {
 
 async function api(p, opt = {}) {
   const { tries = 3, cache: useCache = true, fresh = false } = opt;
+  if (!navigator.onLine) {                       // no point burning 4 retries
+    setNet(true, 'You are offline');
+    const c = useCache && (memGet(p, 864e5) || diskGet(p));
+    if (c) return c;
+    throw new Error('offline');
+  }
   if (useCache && !fresh) { const m = memGet(p, 90000); if (m) return m; }
   let last;
   for (let i = 0; i <= tries; i++) {
@@ -66,10 +100,10 @@ async function api(p, opt = {}) {
       return j;
     } catch (e) { last = e; if (i < tries) await wait(500 * (i + 1) ** 2); }
   }
+  netFails++;
   const stale = (useCache && (memGet(p, 864e5) || diskGet(p)));
   if (stale) { setNet(true, 'Showing saved data — reconnecting'); return stale; }
-  if (!navigator.onLine) setNet(true, 'You are offline');
-  else setNet(true, 'Server is slow — retrying');
+  setNet(true, navigator.onLine ? 'Cannot reach the server — retrying' : 'You are offline');
   throw last || new Error('failed');
 }
 
@@ -96,11 +130,20 @@ const I = {
 const S = {
   view: 'home', stack: [], custom: false,
   queue: [], idx: -1,
-  liked: uniqById(LS('liked', [])), recent: uniqById(LS('recent', [])), dls: uniqById(LS('dls', [])), pls: LS('pls', []),
-  stats: LS('stats', { secs: 0, plays: 0, artists: {}, modes: {} }),
+  liked: uniqById(LS('liked', [])), recent: uniqById(LS('recent', [])), dls: uniqById(LS('dls', [])),
+  pls: (LS('pls', []) || []).filter(p => p && typeof p === 'object' && typeof p.name === 'string')
+        .map(p => ({ id: p.id || Date.now(), name: p.name, songs: uniqById(p.songs) })),
+  stats: (() => { const v = LS('stats', null);
+    const ok = v && typeof v === 'object' && !Array.isArray(v);
+    return { secs: ok && +v.secs > 0 ? +v.secs : 0, plays: ok && +v.plays > 0 ? +v.plays : 0,
+      artists: ok && v.artists && typeof v.artists === 'object' && !Array.isArray(v.artists) ? v.artists : {},
+      modes: ok && v.modes && typeof v.modes === 'object' && !Array.isArray(v.modes) ? v.modes : {} }; })(),
   shuffle: false, repeat: 'off', autoplay: LS('auto', true),
   q: LS('q', '320'), adapt: LS('adapt', true), dlMax: LS('dlMax', true), lang: LS('lang', 'hindi'),
-  mode: LS('mode', 'off'), quick: LS('quick', 'lofi'), eq: LS('eq', [0, 0, 0, 0, 0, 0, 0]), eqPre: LS('eqPre', 'flat'),
+  mode: LS('mode', 'off'), quick: LS('quick', 'lofi'), eq: (() => { const v = LS('eq', null);
+    return (Array.isArray(v) && v.length === 7 && v.every(n => typeof n === 'number' && isFinite(n)))
+      ? v.map(n => clamp(n, -12, 12)) : [0, 0, 0, 0, 0, 0, 0]; })(),
+  eqPre: LS('eqPre', 'flat'),
   rain: false, kar: false, cmp: LS('cmp', false), fade: true, spin: LS('spin', true),
   theme: LS('theme','venom'), dens: LS('dens','default'), accent: LS('accent','default'), font: LS('font','grotesk'), corner: LS('corner','default'),
   room: LS('room', null), es: null, host: LS('rhost', false), snap: null, me: LS('me', 'Guest' + Math.floor(Math.random() * 900 + 100)),
@@ -113,33 +156,52 @@ const save = () => { SET('liked', S.liked.slice(0, 700)); SET('recent', S.recent
 /* ================= AUDIO ENGINE ================= */
 const au = $('#au');
 const EQF = [60, 150, 400, 1000, 2400, 6000, 12000];
-let AC, src, eqN = [], lpN, cvN, wetN, dryN, nzN, rnN, panN, cmpN, anN, outN, fxIn, byp,
-  wLL, wLR, wRL, wRR, ready = false, ph = 0, panRAF = 0, bypassed = null;
+let irCache = {};
+let AC, src, eqN = [], lpN, cvN, wetN, dryN, nzN, rnN, panN, cmpN, anN, outN, fxIn, byp, makeup, clip, preGain, dcBlock,
+  wLL, wLR, wRL, wRR, ready = false, ph = 0, panRAF = 0, panLFO = null, panDepth = null, bypassed = null;
 
 function boot() {
   if (ready) return true;
   try {
-    AC = new (window.AudioContext || window.webkitAudioContext)();
+    AC = new (window.AudioContext || window.webkitAudioContext)({
+      latencyHint: 'playback',   // bigger buffer, fewer dropouts than 'interactive'
+    });
     src = AC.createMediaElementSource(au);
     // 7-band peaking EQ chain
     eqN = EQF.map((f, i) => { const n = AC.createBiquadFilter();
       n.type = i === 0 ? 'lowshelf' : i === EQF.length - 1 ? 'highshelf' : 'peaking';
-      n.frequency.value = f; n.Q.value = 1.1; n.gain.value = 0; return n; });
-    lpN = AC.createBiquadFilter(); lpN.type = 'lowpass'; lpN.frequency.value = 22000;
+      n.frequency.value = f; n.Q.value = 0.85; n.gain.value = 0; return n; });
+    lpN = AC.createBiquadFilter(); lpN.type = 'lowpass'; lpN.frequency.value = 22000; lpN.Q.value = 0.6;
     const sp = AC.createChannelSplitter(2), mg = AC.createChannelMerger(2);
     wLL = AC.createGain(); wLR = AC.createGain(); wRL = AC.createGain(); wRR = AC.createGain();
     wLL.gain.value = wRR.gain.value = 1; wLR.gain.value = wRL.gain.value = 0;
     sp.connect(wLL, 0); sp.connect(wLR, 0); sp.connect(wRR, 1); sp.connect(wRL, 1);
     wLL.connect(mg, 0, 0); wRL.connect(mg, 0, 0); wRR.connect(mg, 0, 1); wLR.connect(mg, 0, 1);
     panN = AC.createStereoPanner();
-    cvN = AC.createConvolver(); cvN.buffer = mkIR(2.7, 2.4);
+    cvN = AC.createConvolver(); cvN.normalize = true;
+    irCache = {};
+    cvN.buffer = getIR(2.2);
+    // reverb should not drag the low end into mud
+    const revHP = AC.createBiquadFilter(); revHP.type = 'highpass'; revHP.frequency.value = 220;
+    const revLP = AC.createBiquadFilter(); revLP.type = 'lowpass'; revLP.frequency.value = 7200;
     wetN = AC.createGain(); wetN.gain.value = 0; dryN = AC.createGain(); dryN.gain.value = 1;
+    // a high-pass at 18 Hz kills DC offset and subsonic rumble that only
+    // eats headroom and makes speakers work for nothing
+    dcBlock = AC.createBiquadFilter(); dcBlock.type = 'highpass';
+    dcBlock.frequency.value = 18; dcBlock.Q.value = 0.7;
+
+    preGain = AC.createGain(); preGain.gain.value = 1;
+    clip = AC.createWaveShaper();
+    clip.curve = mkSoftClipCurve(0);      // transparent until something is boosted
+    clip.oversample = '4x';               // no aliasing from the curve
+
     cmpN = AC.createDynamicsCompressor();
     // transparent by default: only catches true peaks, never pumps
     cmpN.threshold.value = 0; cmpN.ratio.value = 1; cmpN.knee.value = 0;
     cmpN.attack.value = 0.004; cmpN.release.value = 0.25;
     anN = AC.createAnalyser(); anN.fftSize = 512; anN.smoothingTimeConstant = .8;
     outN = AC.createGain();
+    makeup = AC.createGain(); makeup.gain.value = 1;
     /* Two parallel routes from the source:
          byp  : source -> analyser -> out            (bit-transparent)
          fxIn : source -> EQ -> filters -> ... -> out (processed)
@@ -148,13 +210,17 @@ function boot() {
     fxIn = AC.createGain(); fxIn.gain.value = 0;
     byp = AC.createGain(); byp.gain.value = 1;
     src.connect(byp); src.connect(fxIn);
-    byp.connect(anN);
+    byp.connect(anN);          // clean path: straight to the meter and out
 
-    let prev = fxIn; eqN.forEach(n => { prev.connect(n); prev = n; });
+    fxIn.connect(dcBlock);
+    let prev = dcBlock; eqN.forEach(n => { prev.connect(n); prev = n; });
     prev.connect(lpN); lpN.connect(sp); mg.connect(panN);
     panN.connect(dryN); dryN.connect(cmpN);
-    panN.connect(cvN); cvN.connect(wetN); wetN.connect(cmpN);
-    cmpN.connect(anN); anN.connect(outN); outN.connect(AC.destination);
+    const revWide = AC.createStereoPanner();   // keeps the tail off the vocal
+    panN.connect(revHP); revHP.connect(revLP); revLP.connect(cvN);
+    cvN.connect(revWide); revWide.connect(wetN); wetN.connect(cmpN);
+    cmpN.connect(preGain); preGain.connect(clip); clip.connect(makeup);
+    makeup.connect(anN); anN.connect(outN); outN.connect(AC.destination);
     nzN = AC.createGain(); nzN.gain.value = 0;
     rnN = AC.createGain(); rnN.gain.value = 0;
     nzN.connect(outN); rnN.connect(outN);
@@ -171,8 +237,57 @@ function needRain() { if (rnStarted || !ready) return; rnStarted = true;
   const rs = AC.createBufferSource(); rs.buffer = mkNoise(7, 'r'); rs.loop = true;
   const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 4600;
   rs.connect(f); f.connect(rnN); rs.start(); }
-function mkIR(sec, dk) { const n = AC.sampleRate * sec, b = AC.createBuffer(2, n, AC.sampleRate);
-  for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, dk); } return b; }
+/* White noise with an envelope reads as a hiss wash. A room is early
+   reflections first, then a diffuse tail, and the two ears never hear the
+   same thing. This builds all three. */
+function mkIR(sec, dk) {
+  const sr = AC.sampleRate, n = Math.floor(sr * sec);
+  const b = AC.createBuffer(2, n, sr);
+  // a handful of discrete early bounces, slightly different per ear
+  const early = [
+    [0.0043, 0.72], [0.0091, -0.58], [0.0138, 0.49], [0.0201, -0.41],
+    [0.0287, 0.34], [0.0372, -0.27], [0.0461, 0.22], [0.0578, -0.17]
+  ];
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    const skew = c === 0 ? 1 : 1.031;          // decorrelate the ears
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / n;
+      // diffuse tail: noise, low-passed more as it decays, like air absorption
+      const white = Math.random() * 2 - 1;
+      lp += (white - lp) * (0.35 - 0.28 * t);
+      d[i] = lp * Math.pow(1 - t, dk);
+    }
+    early.forEach(([tSec, amp]) => {
+      const idx = Math.floor(tSec * skew * sr);
+      if (idx < n) d[idx] += amp * (c === 0 ? 1 : 0.94);
+    });
+    // normalise so swapping room sizes does not change loudness
+    let peak = 0;
+    for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+    if (peak > 0) for (let i = 0; i < n; i++) d[i] /= peak;
+  }
+  return b;
+}
+
+/* A gentle S-curve. Instead of the hard clip you get when bass boost pushes
+   past full scale, peaks round over the way analogue gear does. */
+/* Impulses are expensive to build, so keep one per room size. */
+function getIR(sec) {
+  const k = sec.toFixed(1);
+  if (!irCache[k]) irCache[k] = mkIR(sec, 2.3);
+  return irCache[k];
+}
+
+function mkSoftClipCurve(amount) {
+  const n = 2048, c = new Float32Array(n), k = amount;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    c[i] = (1 + k) * x / (1 + k * Math.abs(x));
+  }
+  return c;
+}
 function mkNoise(sec, kind) {
   const ch = kind === 'r' ? 2 : 1, n = AC.sampleRate * sec, b = AC.createBuffer(ch, n, AC.sampleRate);
   for (let c = 0; c < ch; c++) { const d = b.getChannelData(c); let l = 0;
@@ -183,34 +298,36 @@ function mkNoise(sec, kind) {
 
 /* ---------- EQ presets ---------- */
 const EQP = {
-  venom:      [4, 3, -1, 0, 2, 3, 5],
+  venom:      [3, 2, -1, 0, 1, 3, 4],
   flat:       [0, 0, 0, 0, 0, 0, 0],
-  bass:       [9, 7, 3, 0, -1, 0, 1],
-  vocal:      [-3, -2, 2, 5, 4, 2, 0],
-  treble:     [-2, -1, 0, 1, 3, 6, 8],
-  electronic: [7, 4, 0, -2, 1, 4, 6],
-  acoustic:   [3, 2, 1, 2, 3, 3, 2],
-  podcast:    [-6, -3, 3, 6, 5, 1, -2],
+  bass:       [7, 5, 2, 0, -1, 0, 1],
+  vocal:      [-3, -2, 1, 4, 3, 2, 0],
+  treble:     [-2, -1, 0, 1, 2, 5, 6],
+  electronic: [6, 3, 0, -2, 1, 3, 5],
+  acoustic:   [2, 2, 1, 1, 2, 3, 2],
+  podcast:    [-5, -3, 2, 5, 4, 1, -2],
+  warm:       [4, 3, 1, 0, -1, -2, -3],
+  bright:     [-1, 0, 0, 1, 2, 4, 5],
 };
 
 /* ---------- 16 sound modes ---------- */
 const MODES = {
-  off:     { n: 'Studio Flat', d: 'Reference, untouched',   sp: 100, lp: 22000, re: 0,  no: 0,  pa: 0,  wi: 100, eq: 'flat' },
-  lofi:    { n: 'Lo-Fi',       d: 'Slow, warm, crackling',  sp: 85,  lp: 2600,  re: 30, no: 22, pa: 0,  wi: 110, eq: [5, 4, 0, -2, -4, -6, -9] },
-  deep:    { n: 'Deep Lo-Fi',  d: 'Heavier body and haze',  sp: 82,  lp: 2000,  re: 46, no: 27, pa: 12, wi: 150, eq: [9, 6, 1, -3, -6, -8, -11] },
-  slowrev: { n: 'Slowed + Reverb', d: 'Dreamy and cinematic', sp: 80, lp: 9000, re: 60, no: 0,  pa: 0,  wi: 160, eq: [5, 3, 0, 0, 1, 2, 1] },
-  night:   { n: 'Nightcore',   d: 'Fast, bright, energetic', sp: 128, lp: 22000, re: 8, no: 0,  pa: 0,  wi: 125, eq: [2, 1, 0, 1, 3, 5, 6] },
-  eight:   { n: '8D Spatial',  d: 'Rotates around your head', sp: 100, lp: 22000, re: 38, no: 0, pa: 55, wi: 185, eq: [4, 2, 0, 1, 2, 3, 3] },
-  bass:    { n: 'Bass Cannon', d: 'Club-grade low end',     sp: 100, lp: 22000, re: 4,  no: 0,  pa: 0,  wi: 115, eq: 'bass' },
-  club:    { n: 'Club',        d: 'Loud, wide and punchy',  sp: 104, lp: 22000, re: 24, no: 0,  pa: 0,  wi: 172, eq: [8, 5, 0, -1, 2, 5, 6] },
-  vocal:   { n: 'Vocal Focus', d: 'Mid-forward clarity',    sp: 100, lp: 22000, re: 5,  no: 0,  pa: 0,  wi: 78,  eq: 'vocal' },
-  hall:    { n: 'Concert Hall', d: 'Live venue acoustics',  sp: 100, lp: 17000, re: 72, no: 0,  pa: 0,  wi: 195, eq: [3, 2, 0, 1, 2, 3, 4] },
-  tape:    { n: 'Cassette',    d: 'Vintage analogue grit',  sp: 76,  lp: 1600,  re: 22, no: 50, pa: 0,  wi: 88,  eq: [7, 5, 1, -3, -7, -10, -12] },
-  radio:   { n: 'AM Radio',    d: 'Narrow retro speaker',   sp: 100, lp: 3600,  re: 10, no: 34, pa: 0,  wi: 22,  eq: [-10, -6, 2, 5, 2, -6, -12] },
-  rainy:   { n: 'Rainy Window', d: 'Lo-fi with rainfall',   sp: 88,  lp: 3400,  re: 45, no: 26, pa: 0,  wi: 132, eq: [5, 3, 0, -2, -3, -5, -7], rain: 1 },
-  sleep:   { n: 'Sleep',       d: 'Soft, drifting, distant', sp: 82, lp: 1400,  re: 58, no: 9,  pa: 8,  wi: 122, eq: [3, 1, -1, -3, -6, -9, -12] },
-  focus:   { n: 'Deep Focus',  d: 'Flat with zero fatigue', sp: 96,  lp: 7200,  re: 12, no: 7,  pa: 0,  wi: 100, eq: [1, 0, 0, 0, -1, -2, -3] },
-  gym:     { n: 'Workout',     d: 'Aggressive and hyped',   sp: 108, lp: 22000, re: 6,  no: 0,  pa: 0,  wi: 142, eq: [10, 6, 0, 1, 3, 6, 7] },
+  off:     { n: 'Studio Flat', d: 'Reference, untouched',      sp: 100, lp: 22000, re: 0,  no: 0,  pa: 0,  wi: 100, eq: 'flat' },
+  lofi:    { n: 'Lo-Fi',       d: 'Slow, warm, crackling',     sp: 88,  lp: 3600,  re: 22, no: 14, pa: 0,  wi: 112, eq: [4, 3, 0, -1, -3, -5, -8] },
+  deep:    { n: 'Deep Lo-Fi',  d: 'Heavier body and haze',     sp: 84,  lp: 2800,  re: 34, no: 18, pa: 8,  wi: 138, eq: [7, 5, 1, -2, -5, -7, -10] },
+  slowrev: { n: 'Slowed + Reverb', d: 'Dreamy and cinematic',  sp: 84,  lp: 13000, re: 46, no: 0,  pa: 0,  wi: 148, eq: [4, 2, 0, 0, 1, 2, 2] },
+  night:   { n: 'Nightcore',   d: 'Fast, bright, energetic',   sp: 122, lp: 22000, re: 5,  no: 0,  pa: 0,  wi: 120, eq: [1, 1, 0, 1, 2, 4, 5] },
+  eight:   { n: '8D Spatial',  d: 'Rotates around your head',  sp: 100, lp: 20000, re: 26, no: 0,  pa: 42, wi: 168, eq: [3, 2, 0, 1, 2, 3, 3] },
+  bass:    { n: 'Bass Cannon', d: 'Club-grade low end',        sp: 100, lp: 22000, re: 2,  no: 0,  pa: 0,  wi: 110, eq: 'bass' },
+  club:    { n: 'Club',        d: 'Loud, wide and punchy',     sp: 102, lp: 22000, re: 15, no: 0,  pa: 0,  wi: 158, eq: [6, 4, 0, -1, 2, 4, 5] },
+  vocal:   { n: 'Vocal Focus', d: 'Mid-forward clarity',       sp: 100, lp: 22000, re: 3,  no: 0,  pa: 0,  wi: 84,  eq: 'vocal' },
+  hall:    { n: 'Concert Hall', d: 'Live venue acoustics',     sp: 100, lp: 18000, re: 54, no: 0,  pa: 0,  wi: 175, eq: [2, 2, 0, 1, 2, 3, 3] },
+  tape:    { n: 'Cassette',    d: 'Vintage analogue grit',     sp: 82,  lp: 2400,  re: 15, no: 34, pa: 0,  wi: 94,  eq: [6, 4, 1, -2, -6, -9, -11] },
+  radio:   { n: 'AM Radio',    d: 'Narrow retro speaker',      sp: 100, lp: 4200,  re: 7,  no: 24, pa: 0,  wi: 30,  eq: [-9, -5, 2, 4, 2, -5, -11] },
+  rainy:   { n: 'Rainy Window', d: 'Lo-fi with rainfall',      sp: 90,  lp: 4200,  re: 32, no: 18, pa: 0,  wi: 126, eq: [4, 3, 0, -1, -3, -4, -6], rain: 1 },
+  sleep:   { n: 'Sleep',       d: 'Soft, drifting, distant',   sp: 86,  lp: 2200,  re: 44, no: 6,  pa: 5,  wi: 116, eq: [2, 1, -1, -3, -5, -8, -11] },
+  focus:   { n: 'Deep Focus',  d: 'Flat with zero fatigue',    sp: 98,  lp: 9500,  re: 9,  no: 4,  pa: 0,  wi: 100, eq: [1, 0, 0, 0, -1, -2, -3] },
+  gym:     { n: 'Workout',     d: 'Aggressive and hyped',      sp: 106, lp: 22000, re: 4,  no: 0,  pa: 0,  wi: 134, eq: [8, 5, 0, 1, 3, 5, 6] },
 };
 const FX = { sp: 100, lp: 22000, re: 0, no: 0, pa: 0, wi: 100 };
 
@@ -236,8 +353,13 @@ function applyFX() {
   if (!touched) { au.playbackRate = 1; try { au.preservesPitch = true; } catch (e) { } return; }
   S.eq.forEach((g, i) => eqN[i] && eqN[i].gain.setTargetAtTime(S.kar && i >= 3 && i <= 4 ? g - 8 : g, t, r));
   lpN.frequency.setTargetAtTime(FX.lp, t, r);
-  wetN.gain.setTargetAtTime(FX.re / 100 * .9, t, r);
-  dryN.gain.setTargetAtTime(1 - FX.re / 340, t, r);
+  // small amounts want a tight room, big amounts want a hall
+  if (cvN) {
+    const want = FX.re >= 45 ? 3.4 : FX.re >= 25 ? 2.4 : 1.5;
+    if (cvN._sec !== want) { cvN._sec = want; try { cvN.buffer = getIR(want); } catch (e) { } }
+  }
+  wetN.gain.setTargetAtTime(Math.pow(FX.re / 100, 1.35) * .8, t, r);
+  dryN.gain.setTargetAtTime(1 - FX.re / 420, t, r);
   if (FX.no > 0) needNoise();
   if (S.rain) needRain();
   nzN.gain.setTargetAtTime(FX.no / 100 * .2, t, r);
@@ -246,16 +368,56 @@ function applyFX() {
   cmpN.threshold.setTargetAtTime(S.cmp ? -3 : 0, t, r);
   cmpN.ratio.setTargetAtTime(S.cmp ? 6 : 1, t, r);
   cmpN.knee.setTargetAtTime(S.cmp ? 4 : 0, t, r);
+  // how hard is anything being pushed? EQ boost plus mode bass counts.
+  const peak = Math.max(0, ...S.eq.map(g => g || 0));
+  // trim first so nothing ever arrives at the clipper already over
+  const headroom = Math.pow(10, -(peak * 0.55) / 20);
+  if (makeup) makeup.gain.setTargetAtTime(clamp(headroom, 0.3, 1), t, .12);
+  // then let the curve round whatever still peaks, rather than square it off
+  if (clip) {
+    const want = peak > 1 ? Math.min(peak / 4, 3) : 0;
+    if (Math.abs((clip._k || 0) - want) > 0.05) { clip._k = want; clip.curve = mkSoftClipCurve(want); }
+  }
+  if (preGain) preGain.gain.setTargetAtTime(1, t, .12);
+
   const w = FX.wi / 100, dd = (1 + w) / 2, cc = (1 - w) / 2;
   wLL.gain.setTargetAtTime(dd, t, r); wRR.gain.setTargetAtTime(dd, t, r);
   wLR.gain.setTargetAtTime(cc, t, r); wRL.gain.setTargetAtTime(cc, t, r);
+  /* Auto-pan used to be a requestAnimationFrame loop writing pan.value sixty
+     times a second, purely to trace a slow sine wave. It ran whether or not
+     anything was playing, and a background tab still pays for the wake-ups.
+
+     An oscillator wired into the pan parameter draws the same curve on the
+     audio thread, so the main thread does nothing at all once it is started
+     and the shape stays smooth even when the page is busy. */
   cancelAnimationFrame(panRAF);
-  if (FX.pa > 0) { const s = FX.pa / 100; const lp = () => { ph += .011 * s; panN.pan.value = Math.sin(ph) * .95; panRAF = requestAnimationFrame(lp); }; panRAF = requestAnimationFrame(lp); }
-  else if (panN) panN.pan.value = 0;
+  if (panLFO) { try { panLFO.stop(); panLFO.disconnect(); } catch (e) { } panLFO = null; }
+  if (panDepth) { try { panDepth.disconnect(); } catch (e) { } panDepth = null; }
+  if (!panN) return;
+  if (FX.pa > 0) {
+    const s = FX.pa / 100;
+    try {
+      panLFO = ctx.createOscillator();
+      panDepth = ctx.createGain();
+      panLFO.type = 'sine';
+      // the old loop advanced .011 rad per frame at ~60fps, so about 0.105 Hz
+      panLFO.frequency.value = 0.105 * s;
+      panDepth.gain.value = .95;
+      panLFO.connect(panDepth).connect(panN.pan);
+      panN.pan.value = 0;            // the oscillator supplies the offset
+      panLFO.start();
+    } catch (e) {
+      // if a browser will not modulate an AudioParam, fall back to the loop
+      panLFO = panDepth = null;
+      const lp = () => { ph += .011 * s; panN.pan.value = Math.sin(ph) * .95; panRAF = requestAnimationFrame(lp); };
+      panRAF = requestAnimationFrame(lp);
+    }
+  } else panN.pan.value = 0;
 }
 function setMode(k, quiet) {
   if (!MODES[k]) k = 'off';
   S.mode = k; SET('mode', k);
+  if (k !== 'off') { S.quick = k; SET('quick', k); }   // the button follows your last choice
   const m = MODES[k];
   FX.sp = m.sp; FX.lp = m.lp; FX.re = m.re; FX.no = m.no; FX.pa = m.pa; FX.wi = m.wi;
   S.eq = (typeof m.eq === 'string' ? EQP[m.eq] : m.eq).slice();
@@ -329,16 +491,22 @@ function paintModes() {
 
 /* ================= QUICK MODE TOGGLE ================= */
 function paintQuick() {
-  const on = S.mode === S.quick && S.mode !== 'off';
+  // when a mode is running the button names it; otherwise it offers the pinned one
+  const active = S.mode !== 'off';
+  const shown = active ? S.mode : (MODES[S.quick] ? S.quick : 'lofi');
+  const name = MODES[shown] ? MODES[shown].n : 'Lo-Fi';
   const b = $('#qMode'), t = $('#qModeT'), m = $('#mMode');
-  if (t) t.textContent = MODES[S.quick] ? MODES[S.quick].n : 'Lo-Fi';
-  if (b) { b.classList.toggle('on', on);
-    b.title = (on ? 'Turn off ' : 'Turn on ') + (MODES[S.quick]?.n || '') + ' — hold to pick a different mode'; }
-  if (m) m.classList.toggle('act', on);
+  if (t && t.textContent !== name) { t.textContent = name; t.classList.remove('roll'); void t.offsetWidth; t.classList.add('roll'); }
+  if (b) { b.classList.toggle('on', active);
+    b.title = (active ? 'Turn off ' + name : 'Turn on ' + name) + ' — hold to pick another mode'; }
+  if (m) m.classList.toggle('act', active);
+  const badge = $('#mdBadge');
+  if (badge) { badge.style.display = active ? '' : 'none'; badge.textContent = active ? name : ''; }
 }
 function toggleQuick() {
-  const target = MODES[S.quick] ? S.quick : 'lofi';
-  const on = S.mode === target;
+  // something running? turn it off. nothing running? start the pinned mode.
+  const target = S.mode !== 'off' ? S.mode : (MODES[S.quick] ? S.quick : 'lofi');
+  const on = S.mode !== 'off';
   const b = $('#qMode');
   if (b) { b.classList.remove('flash', 'pulse2'); void b.offsetWidth; b.classList.add('flash', 'pulse2'); }
   buzz(12);
@@ -396,7 +564,16 @@ function setQ(v) {
 }
 
 /* ================= PLAYBACK ================= */
-const surl = (s, q) => { const u = (s.u || {})[q || S.q] || s.raw || Object.values(s.u || {}).pop(); return u ? '/stream?u=' + encodeURIComponent(u) : ''; };
+function surl(s, q) {
+  const want = q || S.q, u = s.u || {};
+  if (u[want]) return '/stream?u=' + encodeURIComponent(u[want]);
+  // fall down the ladder rather than grabbing whatever is last
+  const order = ['320', '160', '96', '48', '12'];
+  const from = order.indexOf(want);
+  for (let i = Math.max(0, from); i < order.length; i++) if (u[order[i]]) return '/stream?u=' + encodeURIComponent(u[order[i]]);
+  for (let i = from - 1; i >= 0; i--) if (u[order[i]]) return '/stream?u=' + encodeURIComponent(u[order[i]]);
+  return s.raw ? '/stream?u=' + encodeURIComponent(s.raw) : '';
+}
 let errN = 0;
 async function play(list, i) {
   if (list) { S.queue = list.slice(0, 400); S.idx = i; }
@@ -416,24 +593,34 @@ async function play(list, i) {
 }
 const seekBy = d => { try { if (isFinite(au.duration)) au.currentTime = clamp(au.currentTime + d, 0, au.duration); } catch (e) { } };
 const setVol = v => { try { au.volume = clamp(+v || 0, 0, 1); } catch (e) { } };
-let fR; function fadeTo(to, ms) {
+let fR;
+function fadeTo(to, ms) {
   cancelAnimationFrame(fR);
   const a = au.volume, tgt = clamp(+to || 0, 0, 1), t0 = performance.now();
   if (!ms) return setVol(tgt);
-  const st = t => { const k = clamp((t - t0) / ms, 0, 1); setVol(a + (tgt - a) * k);
-    if (k < 1) fR = requestAnimationFrame(st); };
+  /* A linear ramp dips in the middle because loudness is not linear.
+     An equal-power curve keeps the perceived level steady across the fade. */
+  const st = t => {
+    const k = clamp((t - t0) / ms, 0, 1);
+    const shaped = tgt > a
+      ? Math.sin(k * Math.PI / 2)          // fading up
+      : Math.cos((1 - k) * Math.PI / 2);   // fading down
+    setVol(a + (tgt - a) * shaped);
+    if (k < 1) fR = requestAnimationFrame(st);
+  };
   fR = requestAnimationFrame(st);
 }
 
 function paintNow(s) {
   document.body.classList.add('has-track');
   const lk = isLiked(s.id);
-  $('#pImg').src = s.img; $('#pT').textContent = s.t; $('#pA').textContent = s.a;
-  $('#mImg').src = s.img; $('#mT').textContent = s.t; $('#mA').textContent = s.a;
+  $('#pImg').src = imgAt(s.img, 150); $('#pT').textContent = s.t; $('#pA').textContent = s.a;
+  $('#mImg').src = imgAt(s.img, 150); $('#mT').textContent = s.t; $('#mA').textContent = s.a;
   $('#likeB').classList.toggle('on', lk);
   const mp = $('#mLike').querySelector('path'); mp.style.fill = lk ? 'var(--warn)' : 'none'; mp.style.stroke = lk ? 'var(--warn)' : 'currentColor';
   $('#fsBg').style.backgroundImage = `url("${s.img}")`; $('#fsTop').textContent = s.t;
   document.title = s.t + ' · Sonora';
+  const sr = $('#srLive'); if (sr) sr.textContent = 'Now playing ' + s.t + ' by ' + s.a;
   if ('mediaSession' in navigator) try {
     navigator.mediaSession.metadata = new MediaMetadata({ title: s.t, artist: s.a, album: s.al,
       artwork: [96, 192, 256, 384, 512].map(x => ({ src: s.img, sizes: x + 'x' + x, type: 'image/jpeg' })) });
@@ -461,13 +648,13 @@ const prevTrack = () => { if (au.currentTime > 4) return au.currentTime = 0; S.i
 function toggle() {
   if (!S.queue.length) return toast('Nothing queued yet');
   wake();
-  if (S.room && !amHost()) {                       // guest: rejoin the room instead
+  if (S.room && !canDrive()) {                     // locked room: resync instead of fighting
     if (au.paused) { au.play().catch(() => { }); if (S.snap) follow(S.snap, false); }
     else au.pause();
     return;
   }
   au.paused ? au.play() : au.pause();
-  if (S.room && amHost()) rAct(au.paused ? 'pause' : 'play');
+  if (S.room) { S._droveAt = Date.now(); rAct(au.paused ? 'pause' : 'play'); }
 }
 
 /* ================= LIBRARY ================= */
@@ -520,9 +707,14 @@ async function bulkDownload(list, label) {
     <div class="bdstat" id="bdStat">0 of ${total}</div>
     <div class="sb2" style="margin-top:12px;font-size:11.5px;opacity:.7">Your browser may ask permission to save several files. Keep this tab open.</div>
     <button class="wb" id="bdStop">Stop</button>`);
-  let stop = false; $('#bdStop').onclick = () => { stop = true; toast('Stopping after this file'); };
+  let stop = false;
+  const stopBtn = $('#bdStop');
+  if (stopBtn) stopBtn.onclick = () => { stop = true; toast('Stopping after this file'); };
   for (const sg of list) {
-    if (stop) break;
+    // Stop also when the sheet is dismissed. Closing it used to leave the
+    // loop running invisibly, so the rest of the album kept downloading with
+    // no progress shown and no way to call it off.
+    if (stop || !$('#mdl').classList.contains('open')) break;
     i++;
     $('#bdSub') && ($('#bdSub').textContent = sg.t);
     $('#bdStat') && ($('#bdStat').textContent = `${i} of ${total}`);
@@ -553,6 +745,25 @@ function modal(h, after) { const m = $('#sheet');
   $('#mdl').classList.add('open'); $('#mx').onclick = closeM; after && after(m); }
 const closeM = () => $('#mdl').classList.remove('open');
 
+/* Destructive actions used the browser's own confirm(). That dialog is
+   suppressed outright in an installed PWA and in the Android WebView, and
+   Chrome blocks it from a cross-origin frame, so the action would silently do
+   nothing with no way to tell. It also freezes the whole page while it is up.
+   This asks the same question in Sonora's own sheet, which works everywhere
+   and matches the rest of the interface. */
+function askConfirm(title, body, confirmLabel, onYes) {
+  modal(`<h3>${esc(title)}</h3>
+    ${body ? `<div class="sb2">${esc(body)}</div>` : ''}
+    <div class="twobtn"><button class="wb" id="cfNo" style="margin:0">Cancel</button>
+    <button class="wb pri" id="cfYes" style="margin:0">${esc(confirmLabel || 'Confirm')}</button></div>`,
+    () => {
+      const no = $('#cfNo'), yes = $('#cfYes');
+      if (no) no.onclick = closeM;
+      if (yes) yes.onclick = () => { closeM(); try { onYes(); } catch (e) { toast('That did not work'); } };
+      if (yes) yes.focus();
+    });
+}
+
 function addToPl(s) {
   modal(`<h3>Add to playlist</h3><div class="sb2">${esc(s.t)}</div>
     <div class="dlr" style="flex-direction:column;align-items:stretch">
@@ -568,7 +779,7 @@ function addToPl(s) {
 
 /* ================= BUILDERS ================= */
 function cardEl(x, cb, yr) {
-  const c = el('div', 'cd', `<div class="th"><img loading="lazy" decoding="async" src="${x.img}" alt="" onload="this.classList.add('rdy')" onerror="this.classList.add('rdy')">
+  const c = el('div', 'cd', `<div class="th"><img loading="lazy" decoding="async" src="${imgAt(x.img, 150)}" srcset="${imgSet(x.img, 150)}" sizes="150px" alt="" onload="this.classList.add('rdy')" onerror="this.classList.add('rdy')">
     ${yr && x.y ? `<span class="yr">${esc(x.y)}</span>` : ''}
     <button class="pf">${I.play}</button></div>
     <div class="meta2"><h4>${esc(x.t)}</h4><p>${esc(x.s || x.a || '')}</p></div>`);
@@ -582,8 +793,10 @@ function rowList(list, onDel, opt) {
   const sortable = opt && opt.sortable;
   list.forEach((s, i) => {
     const r = el('div', 'rw'); r.dataset.id = s.id; r.dataset.n = i + 1; r.dataset.pos = i;
+    r.tabIndex = 0; r.setAttribute('role', 'button');
+    r.setAttribute('aria-label', `${s.t}, ${s.a}`);
     if (sortable) r.draggable = true;
-    r.innerHTML = `<div class="rn">${sortable ? '<span class="grip"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg></span>' : (i + 1)}</div><img class="ra" loading="lazy" decoding="async" src="${s.img}" alt="">
+    r.innerHTML = `<div class="rn">${sortable ? '<span class="grip"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg></span>' : (i + 1)}</div><img class="ra" loading="lazy" decoding="async" src="${imgAt(s.img, 50)}" srcset="${imgSet(s.img, 50)}" sizes="42px" alt="">
       <div style="min-width:0"><div class="rt cl">${esc(s.t)}</div>
       <div class="rs cl">${esc(s.a)}${s.y ? ' · ' + esc(s.y) : ''}${s.pl ? ' · ' + nf(s.pl) : ''}</div></div>
       <div class="rc"><button class="mi ${isLiked(s.id) ? 'lk' : ''}" data-a="like" title="Like">${I.heart}</button>
@@ -594,6 +807,11 @@ function rowList(list, onDel, opt) {
       if (b) { e.stopPropagation(); const a = b.dataset.a;
         a === 'like' ? like(s) : a === 'dl' ? dlSheet(s) : ctxMenu(e, s, onDel && (() => onDel(i))); return; }
       play(list, i); };
+    r.onkeydown = e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); play(list, i); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); r.nextElementSibling?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); r.previousElementSibling?.focus(); }
+    };
     r.oncontextmenu = e => { e.preventDefault(); ctxMenu(e, s, onDel && (() => onDel(i))); };
     let lt; r.addEventListener('touchstart', e => { lt = setTimeout(() => { buzz(14); ctxMenu(e.touches[0], s, onDel && (() => onDel(i))); }, 480); }, { passive: true });
     r.addEventListener('touchend', () => clearTimeout(lt)); r.addEventListener('touchmove', () => clearTimeout(lt), { passive: true });
@@ -664,13 +882,7 @@ function H(t, b, ac) {
   w.innerHTML = `<div class="txt"><h2>${esc(t)}</h2>${b ? `<div class="sub2">${esc(b)}</div>` : ''}</div>`;
   return w;
 }
-function Hx(t, sub, actions) {         // header with buttons on the right
-  const w = H(t, sub);
-  if (actions?.length) { const a = el('div', 'act');
-    actions.forEach(([lbl, fn]) => { const b = el('button', 'chip', lbl); b.onclick = fn; a.appendChild(b); });
-    w.appendChild(a); }
-  return w;
-}
+
 const skel = n => { const g = el('div', 'grid'); for (let i = 0; i < n; i++) g.appendChild(el('div', 'sk2 skc')); return g; };
 const emptyBox = (ic, a, b) => el('div', 'mt', `<div class="ico">${ic}</div><h3>${esc(a)}</h3><p>${esc(b)}</p>`);
 function errBox(fn) { const e = el('div', 'er', `<span>Couldn't load that. Check your connection.</span><button>Retry</button>`);
@@ -715,6 +927,7 @@ function render() {
   const v = $('#view'); v.innerHTML = '';
   const F = { home: vHome, trend: vTrend, search: vSearch, mood: vMood, era: vEra, studio: vStudio,
     room: vRoom, pls: vPls, stats: vStats, prefs: vPrefs,
+    get: vGet,
     legal: vLegal,
     liked: () => vLib(v, S.liked, 'Liked Songs', 'Nothing liked yet', 'Tap the heart on any track'),
     queue: () => vQueue(v),
@@ -770,6 +983,17 @@ async function vHome(v) {
       <button class="hb pri" id="hPlay"><svg viewBox="0 0 24 24"><path d="M8 5.2v13.6L19 12z"/></svg> Play trending</button>
       <button class="hb" id="hShuf"><svg viewBox="0 0 24 24"><path d="M16 3.5h4.5V8"/><path d="M3.5 20.5 20.5 3.5"/><path d="M20.5 16v4.5H16"/><path d="m15 15 5.5 5.5"/><path d="M3.5 3.5 9 9"/></svg> Shuffle</button>
       <button class="hb" id="hBrowse">Browse catalog</button>
+      <button class="hb ghost2" id="hGet"><svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg> <span id="hGetT">Install the app</span></button>
+    </div>
+    <div class="getstrip" id="getStrip" hidden>
+      <div class="gsL">
+        <span class="gsIco" id="gsIco"></span>
+        <div class="gsT"><b id="gsTitle">Get the app</b><span id="gsSub">Free · no account</span></div>
+      </div>
+      <div class="gsR">
+        <a class="gsBtn" id="gsGo" href="#">Download</a>
+        <button class="gsAll" id="gsAll">All platforms</button>
+      </div>
     </div>
     <div class="eqmini"><i></i><i></i><i></i><i></i><i></i></div>`);
   hero.appendChild(langRow(render)); v.appendChild(hero);
@@ -778,6 +1002,85 @@ async function vHome(v) {
   $('#hShuf').onclick = () => { if (!pool.length) return toast('Still loading');
     S.shuffle = true; $('#shuf').classList.add('on'); play([...pool].sort(() => Math.random() - .5), 0); };
   $('#hBrowse').onclick = () => nav('trend');
+  // download strip: names the visitor's platform and shows how many installs there are
+  (async () => {
+    const strip = $('#getStrip'); if (!strip) return;
+    if ((window.Android && window.Android.isNative) || (window.Desktop && window.Desktop.isDesktop)) return;
+    const ua = navigator.userAgent || '', plat = navigator.platform || '';
+    const iPad = /Mac/i.test(plat) && navigator.maxTouchPoints > 1;
+    const mine = /Android/i.test(ua) ? 'android'
+      : /iPhone|iPad|iPod/i.test(ua) || iPad ? 'ios'
+      : /Win/i.test(plat) ? 'windows'
+      : /Mac/i.test(plat) ? 'mac'
+      : /Linux/i.test(plat) ? 'linux' : '';
+    const label = { android: 'Android', windows: 'Windows', mac: 'macOS', linux: 'Linux', ios: 'iPhone' }[mine] || '';
+    const ICO = {
+      android: '<svg viewBox="0 0 24 24"><rect x="5.5" y="7" width="13" height="11" rx="2"/><path d="M8.5 7 7 4.2M15.5 7 17 4.2"/><path d="M9 18v2.2M15 18v2.2"/></svg>',
+      windows: '<svg viewBox="0 0 24 24"><path d="M3.5 6.2 10.5 5v6.4H3.5zM12 4.8l8.5-1.4v8H12zM3.5 12.6h7V19L3.5 17.8zM12 12.6h8.5v8L12 19.2z"/></svg>',
+      mac: '<svg viewBox="0 0 24 24"><path d="M16.2 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.15-2.8.85-3.5.85s-1.8-.83-3-.8c-1.5.02-2.9.9-3.7 2.25-1.6 2.75-.4 6.8 1.1 9 .75 1.1 1.6 2.3 2.8 2.25 1.1-.05 1.5-.72 2.9-.72s1.7.72 2.9.7c1.2-.02 2-1.1 2.7-2.2.85-1.25 1.2-2.5 1.2-2.55-.03-.02-2.3-.9-2.3-3.5z"/></svg>',
+      linux: '<svg viewBox="0 0 24 24"><path d="M9.2 3.8c0-1.1.9-2 2-2h1.6c1.1 0 2 .9 2 2v3.4c0 1.5 3 3.6 3 7.6 0 2.8-1.2 4.5-2.2 5.4-.6.5-1.4.8-2.2.8h-2.8c-.8 0-1.6-.3-2.2-.8-1-.9-2.2-2.6-2.2-5.4 0-4 3-6.1 3-7.6z"/></svg>',
+      ios: '<svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.4"/><path d="M11 18.6h2"/></svg>'
+    };
+    const ico = $('#gsIco'); if (ico) ico.innerHTML = ICO[mine] || ICO.linux;
+    strip.hidden = false;
+    const all = $('#gsAll'); if (all) all.onclick = () => nav('get');
+
+    /* Everything below runs after an await, by which point the visitor may
+       have navigated away and this strip may no longer be in the document.
+       Reaching for its children blindly threw and killed the rest of the
+       home page's setup, so bail out if the strip has gone. */
+    const alive = () => strip.isConnected && $('#gsTitle') && $('#gsGo');
+    try {
+      const d = await api('/api/downloads', { cache: false, tries: 0 });
+      if (!alive()) return;
+      const b = (d.builds || []).find(x => x.os === mine);
+      const n = d.installs || 0;
+      const pretty = n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n;
+      const sub = $('#gsSub');
+      if (sub) sub.textContent = n
+        ? pretty + (n === 1 ? ' download' : ' downloads') + ' so far · free, no account'
+        : 'Free · no account · nothing tracked';
+      if (b) {
+        $('#gsTitle').textContent = 'Sonora for ' + label;
+        const a = $('#gsGo');
+        a.textContent = 'Download · ' + b.size;
+        a.href = b.file;
+        // 'download' only works same-origin; a release asset is cross-origin
+        if (b.file.charAt(0) === '/') a.setAttribute('download', '');
+        else { a.removeAttribute('download'); a.rel = 'noopener'; }
+        a.onclick = () => { toast('Downloading the ' + label + ' build'); setTimeout(() => { try { api('/api/downloads', { cache: false, tries: 0 }); } catch (e) { } }, 1500); };
+      } else if (mine === 'ios') {
+        $('#gsTitle').textContent = 'Add Sonora to your Home Screen';
+        const a = $('#gsGo'); a.textContent = 'Show me how';
+        a.href = '#'; a.removeAttribute('download');
+        a.onclick = e => { e.preventDefault(); iosHelp(); };
+      } else {
+        $('#gsTitle').textContent = 'Get the app';
+        const a = $('#gsGo'); a.textContent = 'See builds';
+        a.href = '#'; a.removeAttribute('download');
+        a.onclick = e => { e.preventDefault(); nav('get'); };
+      }
+    } catch (e) {
+      if (!alive()) return;
+      $('#gsTitle').textContent = 'Get the app';
+      const a = $('#gsGo'); a.textContent = 'See builds';
+      a.href = '#'; a.removeAttribute('download');
+      a.onclick = e => { e.preventDefault(); nav('get'); };
+    }
+  })();
+
+  (() => {
+    const g = $('#hGet'); if (!g) return;
+    if ((window.Android && window.Android.isNative) || (window.Desktop && window.Desktop.isDesktop)) { g.remove(); return; }
+    const t = $('#hGetT');
+    if (t) { const p2 = navigator.platform || '', ua = navigator.userAgent || '';
+      if (/Android/i.test(ua)) t.textContent = 'Install for Android';
+      else if (/iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(p2) && navigator.maxTouchPoints > 1)) t.textContent = 'Add to Home Screen';
+      else if (/Win/i.test(p2)) t.textContent = 'Install for Windows';
+      else if (/Mac/i.test(p2)) t.textContent = 'Install for Mac';
+      else if (/Linux/i.test(p2)) t.textContent = 'Install for Linux'; }
+    g.onclick = () => nav('get');
+  })();
 
   if (S.recent.length) { v.appendChild(H('Jump back in', 'Pick up where you left off')); v.appendChild(railWrap(sGrid(S.recent.slice(0, 16), true))); }
   if (S.liked.length > 3) { v.appendChild(H('From your likes', 'Built from the songs you saved')); v.appendChild(railWrap(sGrid([...S.liked].sort(() => Math.random() - .5).slice(0, 16), true))); }
@@ -868,7 +1171,7 @@ async function openMix(m) {
 function tile(title, sub, hue, cb, big) {
   const t = el('div', 'tile', `${big ? `<div class="num">${esc(big)}</div>` : ''}${esc(title)}<small>${esc(sub)}</small>`);
   t.style.setProperty('--h', hue);
-  t.querySelector; const b = el('div'); // gradient layer via inline style on ::before not possible → use background
+  t.querySelector; const b = el('div'); // gradient layer via inline style on ::before not possible, so use background
   t.style.background = `linear-gradient(150deg,hsl(${hue} 58% 22%),hsl(${hue + 40} 52% 12%))`;
   t.onclick = cb; return t;
 }
@@ -995,7 +1298,9 @@ function openPl(i) {
   const b = el('div', 'chips');
   if (p.songs.length) { const a = el('button', 'chip on', 'Play all'); a.onclick = () => play(p.songs, 0); b.appendChild(a); }
   const d = el('button', 'chip', 'Delete playlist');
-  d.onclick = () => { if (confirm('Delete "' + p.name + '"?')) { S.pls.splice(i, 1); save(); nav('pls', false); } };
+  d.onclick = () => askConfirm('Delete this playlist?', p.name + ' has ' + p.songs.length +
+    (p.songs.length === 1 ? ' track' : ' tracks') + '. The songs stay in your library.', 'Delete',
+    () => { S.pls.splice(i, 1); save(); nav('pls', false); toast('Playlist deleted'); });
   b.appendChild(d); v.appendChild(b); v.appendChild(gap());
   v.appendChild(p.songs.length ? rowList(p.songs, j => { p.songs.splice(j, 1); save(); openPl(i); }) : emptyBox(I.music, 'Empty playlist', 'Add tracks from the ⋯ menu'));
 }
@@ -1044,6 +1349,18 @@ function vPrefs(v) {
   row(g, 'Sleep timer', 'Fade out and stop automatically', btn('Set timer', () => openPan('#tmPan')));
 
   g = group('Rooms', 'Listening together');
+  if (window.Android && window.Android.isNative) {
+    const rhIn = el('input', 'sinp');
+    rhIn.placeholder = 'https://sonora-xxxx.onrender.com';
+    api('/api/roomhost', { cache: false, tries: 0 }).then(d => { rhIn.value = d.host || ''; }).catch(() => { });
+    rhIn.onchange = async () => {
+      const u = rhIn.value.trim().replace(/\/+$/, '');
+      try { await api('/api/roomhost?url=' + encodeURIComponent(u), { cache: false, tries: 0 });
+        S._roomHostOK = !!u; S._roomHostNeeded = !u; toast(u ? 'Room server saved' : 'Room server cleared');
+      } catch (e) { toast('Could not save'); }
+    };
+    row(g, 'Room server', 'Your hosted Sonora, for listening together', rhIn);
+  }
   const nameIn = el('input', 'sinp'); nameIn.value = S.me; nameIn.maxLength = 18;
   nameIn.oninput = () => { S.me = nameIn.value.trim() || 'Guest'; SET('me', S.me); };
   row(g, 'Display name', 'How others see you in a room', nameIn);
@@ -1054,9 +1371,28 @@ function vPrefs(v) {
   row(g, 'Liked songs', S.liked.length + ' saved', btn('View', () => nav('liked')));
   row(g, 'Downloads', S.dls.length + ' files', btn('View', () => nav('dls')));
   row(g, 'Export library', 'Save likes, playlists and history as JSON', btn('Export', () => {
-    const bl = new Blob([JSON.stringify({ v: 1, liked: S.liked, pls: S.pls, recent: S.recent, stats: S.stats }, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(bl);
-    a.download = 'sonora-library-' + new Date().toISOString().slice(0, 10) + '.json'; a.click(); toast('Library exported'); }));
+    /* Two problems here before: the object URL was never revoked, so every
+       export pinned its blob in memory for the life of the tab, and if
+       createObjectURL was unavailable the whole settings handler threw and
+       took the rest of the row's wiring with it. */
+    const json = JSON.stringify({ v: 1, liked: S.liked, pls: S.pls, recent: S.recent, stats: S.stats }, null, 2);
+    const name = 'sonora-library-' + new Date().toISOString().slice(0, 10) + '.json';
+    try {
+      const bl = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(bl);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; a.click();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { } }, 30000);
+      toast('Library exported');
+    } catch (e) {
+      // a data URL works anywhere a blob URL does not
+      try {
+        const a = document.createElement('a');
+        a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+        a.download = name; a.click();
+        toast('Library exported');
+      } catch (e2) { toast('Could not export on this browser'); }
+    } }));
   row(g, 'Import library', 'Restore from a previous export', btn('Import', () => {
     const f = document.createElement('input'); f.type = 'file'; f.accept = '.json';
     f.onchange = async () => { try { const j = JSON.parse(await f.files[0].text());
@@ -1064,17 +1400,79 @@ function vPrefs(v) {
       if (j.recent) S.recent = uniqById(j.recent); if (j.stats) S.stats = j.stats;
       save(); render(); toast('Library imported'); } catch { toast('That file could not be read'); } }; f.click(); }));
   row(g, 'Clear history', 'Forget recently played', btn('Clear', () => { S.recent = []; save(); toast('History cleared'); render(); }));
-  row(g, 'Reset everything', 'Erase all local Sonora data', btn('Reset', () => {
-    if (confirm('Erase all local Sonora data? This cannot be undone.')) { localStorage.clear(); location.reload(); } }));
+  row(g, 'Reset everything', 'Erase all local Sonora data', btn('Reset', () =>
+    askConfirm('Erase everything?', 'This removes ' + S.liked.length + ' liked songs, ' +
+      S.pls.length + ' playlists and your whole history from this device. It cannot be undone, ' +
+      'so export first if you might want any of it back.', 'Erase everything',
+      () => { localStorage.clear(); location.reload(); })));
+
+  if (window.Android && window.Android.isNative) {
+    g = group('Updates', 'Get new features without reinstalling');
+    const stat = el('div', 'si2'); // filled in below
+    const refreshRow = (info) => {
+      const v = info && info.version ? 'Web v' + info.version : 'Web version: bundled';
+      const apk = info && info.apk ? ' · app build ' + info.apk : '';
+      const when = info && info.checked ? new Date(info.checked).toLocaleString() : 'never';
+      stat.innerHTML = `<b>${esc(v + apk)}</b><span>Last checked ${esc(when)}${info && info.last ? ' — ' + esc(info.last) : ''}</span>`;
+    };
+    const rowStat = el('div', 'setrow'); rowStat.appendChild(stat);
+    const chk = btn('Check now', async () => {
+      chk.textContent = 'Checking…'; chk.disabled = true;
+      try {
+        const d = await api('/api/update/check', { cache: false, tries: 0 });
+        toast(d.result || 'Done');
+        if (d.reload) { toast('Restarting with the update'); setTimeout(() => window.Android.reloadApp(), 900); }
+      } catch (e) { toast('Could not check'); }
+      chk.textContent = 'Check now'; chk.disabled = false;
+      try { refreshRow(await api('/api/update/status', { cache: false, tries: 0 })); } catch (e) { }
+    }, 1);
+    rowStat.appendChild(chk); g.appendChild(rowStat);
+    api('/api/update/status', { cache: false, tries: 0 }).then(refreshRow).catch(() => refreshRow(null));
+
+    const srcIn = el('input', 'sinp'); srcIn.placeholder = 'https://raw.githubusercontent.com/user/repo/main/';
+    srcIn.style.width = '100%';
+    api('/api/update/status', { cache: false, tries: 0 }).then(i => { srcIn.value = (i && i.source) || ''; }).catch(() => { });
+    srcIn.onchange = async () => {
+      try { await api('/api/update/source?url=' + encodeURIComponent(srcIn.value.trim()), { cache: false, tries: 0 });
+        toast('Update source saved'); } catch (e) { toast('Could not save'); }
+    };
+    row(g, 'Update source', 'Raw URL of the folder holding version.json', srcIn);
+    row(g, 'Force reinstall files', 'Download the latest even if the version matches', btn('Force', async () => {
+      toast('Downloading…');
+      try { const d = await api('/api/update/check?force=1', { cache: false, tries: 0 });
+        toast(d.result || 'Done'); if (d.reload) setTimeout(() => window.Android.reloadApp(), 900);
+      } catch (e) { toast('Failed'); }
+    }));
+    row(g, 'Revert to bundled version', 'Undo every downloaded update', btn('Revert', () =>
+      askConfirm('Revert to the bundled version?',
+        'Every downloaded update is discarded and the app goes back to the interface it shipped with. ' +
+        'Your library is not touched.', 'Revert', async () => {
+          try { await api('/api/update/reset', { cache: false, tries: 0 }); toast('Reverted — restarting');
+            setTimeout(() => window.Android.reloadApp(), 800); } catch (e) { toast('Failed'); }
+        })));
+  }
 
   g = group('About', 'Sonora');
   row(g, 'Community', (liveData.total || 0) + ' total listeners · ' + (liveData.n || 0) + ' online now',
     btn('Refresh', () => { beat(); toast('Refreshed'); }));
+  row(g, 'Updates', 'Where new versions come from', btn('Open', () => nav('get')));
   row(g, 'About and legal', 'Terms, privacy and takedown policy', btn('Read', () => nav('legal')));
-  row(g, 'Force update', 'Clear cached files and reload', btn('Update now', async () => {
-    try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
-      if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
-    } catch (e) { } sessionStorage.clear(); toast('Updating…'); setTimeout(() => location.reload(true), 500); }));
+  row(g, 'Force update', 'Clear cached files and reload', btn('Update now', () =>
+    /* This throws away the service worker and every cache, so it is a real
+       reload, not a refresh — worth asking first. reload(true) was also
+       wrong: the argument has been ignored for years and Firefox rejects it
+       outright, which meant the page never came back on that browser. */
+    askConfirm('Reload with fresh files?',
+      'Cached files and the offline copy are cleared, then Sonora reloads. ' +
+      'Your library is not affected.', 'Reload', async () => {
+        try {
+          if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+          if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+        } catch (e) { }
+        try { sessionStorage.clear(); } catch (e) { }
+        toast('Updating…');
+        setTimeout(() => location.reload(), 500);
+      })));
 
   v.appendChild(H('Keyboard shortcuts', 'Faster with two hands'));
   const k = el('div', 'bds');
@@ -1082,6 +1480,219 @@ function vPrefs(v) {
     'L like', 'D download', 'F full screen', 'Y lyrics', 'M mute', 'C room chat', 'Q quick mode', 'K commands', 'Ctrl+K palette', '/ search', '1-9 modes', 'Esc close']
     .forEach(x => k.appendChild(el('span', 'bd', x)));
   v.appendChild(k);
+}
+
+const OS_ICON = {
+  android: '<svg viewBox="0 0 24 24"><rect x="5.5" y="7" width="13" height="11" rx="2"/><path d="M8.5 7 7 4.2M15.5 7 17 4.2M9.5 11h.01M14.5 11h.01"/><path d="M9 18v2.2M15 18v2.2M3.4 10.5v4.5M20.6 10.5v4.5"/></svg>',
+  windows: '<svg viewBox="0 0 24 24"><path d="M3.5 6.2 10.5 5v6.4H3.5zM12 4.8l8.5-1.4v8H12zM3.5 12.6h7V19L3.5 17.8zM12 12.6h8.5v8L12 19.2z"/></svg>',
+  mac: '<svg viewBox="0 0 24 24"><path d="M16.2 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.15-2.8.85-3.5.85s-1.8-.83-3-.8c-1.5.02-2.9.9-3.7 2.25-1.6 2.75-.4 6.8 1.1 9 .75 1.1 1.6 2.3 2.8 2.25 1.1-.05 1.5-.72 2.9-.72s1.7.72 2.9.7c1.2-.02 2-1.1 2.7-2.2.85-1.25 1.2-2.5 1.2-2.55-.03-.02-2.3-.9-2.3-3.5z"/><path d="M14 5.4c.6-.75 1-1.8.9-2.85-.87.04-1.93.58-2.56 1.32-.56.65-1.05 1.72-.92 2.73.97.08 1.96-.5 2.58-1.2z"/></svg>',
+  linux: '<svg viewBox="0 0 24 24"><path d="M9.2 3.8c0-1.1.9-2 2-2h1.6c1.1 0 2 .9 2 2v3.4c0 1.5 3 3.6 3 7.6 0 2.8-1.2 4.5-2.2 5.4-.6.5-1.4.8-2.2.8h-2.8c-.8 0-1.6-.3-2.2-.8-1-.9-2.2-2.6-2.2-5.4 0-4 3-6.1 3-7.6z"/><path d="M10.4 6.2h.01M13.6 6.2h.01M10.8 9.4c.7.6 1.7.6 2.4 0"/></svg>',
+  'linux-deb': '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M15.4 8.6a4.6 4.6 0 1 0-2.2 7.9"/></svg>',
+  ios: '<svg viewBox="0 0 24 24"><rect x="6.5" y="2" width="11" height="20" rx="2.6"/><path d="M10.4 4.6h3.2"/><path d="M10.6 19h2.8"/></svg>'
+};
+
+// iPhone and iPad install: Safari can add Sonora to the Home Screen as a real app.
+function iosHelp() {
+  modal(`<h3>Install on iPhone or iPad</h3>
+    <div class="sb2">Apple does not allow music apps like this in the App Store, so Sonora installs straight from Safari instead. It gets its own icon, opens full screen and has no browser bars.</div>
+    <div class="steps4" style="margin-top:12px">
+      <div class="step4"><b><i>1</i>Open this page in Safari</b><span>Chrome and Firefox on iOS cannot install web apps. Safari can.</span></div>
+      <div class="step4"><b><i>2</i>Tap Share</b><span>The square with an arrow pointing up, at the bottom of the screen on iPhone or the top on iPad.</span></div>
+      <div class="step4"><b><i>3</i>Add to Home Screen</b><span>Scroll the share sheet down until you see it, then tap Add.</span></div>
+      <div class="step4"><b><i>4</i>Open Sonora from the Home Screen</b><span>It behaves like any other app. Likes, playlists and settings are kept on the device.</span></div>
+    </div>
+    <div class="sb2" style="margin-top:12px">Background playback on iOS pauses when the screen locks, which is an Apple restriction on web apps. Everything else, including the equaliser, sound modes, lyrics and listening rooms, works.</div>
+    <div class="twobtn"><button class="wb pri" id="iosOk" style="margin:0">Got it</button></div>`,
+    () => { const b = $('#iosOk'); if (b) b.onclick = closeM; });
+}
+
+async function vGet(v) {
+  v.appendChild(el('div', 'hero', `<span class="kicker">
+    <svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg> Free · no account</span>
+    <h1>Take Sonora <em>everywhere</em></h1>
+    <p>The same seven-band equaliser, the same sixteen sound modes, the same library — on your phone and on your computer. Nothing to sign up for.</p>`));
+
+  const dlHead = H('Downloads', 'Pick your platform');
+  v.appendChild(dlHead);
+  const box = el('div'); box.appendChild(skel(4)); v.appendChild(box);
+
+  try {
+    const d = await api('/api/downloads', { cache: false, tries: 1 });
+    const builds = d.builds || [];
+    box.innerHTML = '';
+    if (d.installs) {
+      const n = d.installs, pretty = n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n;
+      const sub = dlHead.querySelector('.sub2');
+      if (sub) sub.textContent = pretty + (n === 1 ? ' download' : ' downloads') + ' so far · pick your platform';
+    }
+    const grid = el('div', 'dlgrid');
+    const want = [
+      ['android', 'Android', 'Android 7.0 or newer'],
+      ['windows', 'Windows', 'Windows 10 and 11, 64-bit'],
+      ['mac', 'macOS', 'Intel and Apple silicon'],
+      ['linux', 'Linux', 'AppImage, runs anywhere'],
+      ['linux-deb', 'Linux (deb)', 'Debian, Ubuntu, Mint'],
+      ['ios', 'iPhone and iPad', 'Install from Safari, no App Store']
+    ];
+    const ua = navigator.userAgent || '', plat = navigator.platform || '';
+    const iPad = /Mac/i.test(plat) && navigator.maxTouchPoints > 1;
+    const mine = /Android/i.test(ua) ? 'android'
+      : /iPhone|iPad|iPod/i.test(ua) || iPad ? 'ios'
+      : /Win/i.test(plat) ? 'windows'
+      : /Mac/i.test(plat) ? 'mac'
+      : /Linux/i.test(plat) ? 'linux' : '';
+    want.sort((a, b2) => (a[0] === mine ? -1 : b2[0] === mine ? 1 : 0));
+    want.forEach(([os, label, note], i) => {
+      const b = builds.find(x => x.os === os);
+      const isIOS = os === 'ios';
+      const c = el('div', 'dlcard' + (b || isIOS ? '' : ' soon') + (os === mine ? ' mine' : ''));
+      if (os === mine) c.setAttribute('data-mine', 'Your device');
+      c.style.animationDelay = (i * .05) + 's';
+      c.innerHTML = `<div class="os">${OS_ICON[os] || OS_ICON.linux}</div>
+        <h4>${esc(label)}</h4>
+        <div class="note">${esc(b ? b.note : note)}</div>
+        <div class="meta4">${b ? esc(b.ext + ' · ' + b.size) : isIOS ? 'Web app · no download' : 'Not built yet'}</div>`;
+      if (isIOS && !b) {
+        const a = el('a', 'go', 'How to install');
+        a.href = '#';
+        a.onclick = e => { e.preventDefault(); iosHelp(); };
+        c.appendChild(a);
+      } else if (b) {
+        const a = el('a', 'go', 'Download');
+        a.href = b.file;
+        // 'download' only works same-origin; a release asset is cross-origin
+        if (b.file.charAt(0) === '/') a.setAttribute('download', '');
+        else { a.removeAttribute('download'); a.rel = 'noopener'; }
+        a.onclick = () => toast('Downloading the ' + label + ' build');
+        c.appendChild(a);
+      } else {
+        c.appendChild(el('div', 'go', 'Coming soon'));
+      }
+      grid.appendChild(c);
+    });
+    box.appendChild(grid);
+    if (!builds.length) box.appendChild(el('div', 'sb2',
+      'No builds have been published on this server yet. Run ./build-apk.sh and desktop/build.sh, then refresh.'));
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(errBox(() => render()));
+  }
+
+  {
+    v.appendChild(H('Updates', 'How this copy stays current'));
+    const ub = el('div', 'setgrid');
+
+    const st = el('div', 'setrow');
+    st.innerHTML = '<div class="si2"><b>Checking…</b><span>Reading the update source</span></div>';
+    const doBtn = el('button', 'sbtn pri', 'Check now');
+    st.appendChild(doBtn); ub.appendChild(st);
+
+    const srcRow = el('div', 'setrow');
+    srcRow.innerHTML = '<div class="si2"><b>Update source</b><span>Where new versions come from</span></div>';
+    const srcVal = el('div', 'srcval');
+    srcRow.appendChild(srcVal); ub.appendChild(srcRow);
+    v.appendChild(ub);
+
+    const native = !!(window.Android && window.Android.isNative);
+    const statusURL = native ? '/api/update/status' : '/api/selfupdate/status';
+    const runURL = native ? '/api/update/check' : '/api/selfupdate/run';
+
+    const shortSrc = u => String(u || '')
+      .replace('https://raw.githubusercontent.com/', 'github.com/')
+      .replace('https://gitlab.com/', 'gitlab.com/')
+      .replace(/\/-?\/?raw\//, '/').replace(/\/$/, '');
+
+    const paint = i => {
+      const ver = i && i.version;
+      st.querySelector('b').textContent = ver ? 'Interface v' + ver : 'Interface: as shipped';
+      const when = i && (i.checked || i.lastAt);
+      st.querySelector('span').textContent = i && i.source
+        ? 'Updates automatically' + (when ? ' · last checked ' + new Date(when).toLocaleString() : '')
+        : 'No source configured';
+      srcVal.innerHTML = i && i.source
+        ? '<span class="srcok">' + esc(shortSrc(i.source)) + '</span>'
+        : '<span class="srcbad">not set</span>';
+    };
+    api(statusURL, { cache: false, tries: 0 }).then(paint).catch(() => paint(null));
+
+    doBtn.onclick = async () => {
+      doBtn.textContent = 'Checking…'; doBtn.disabled = true;
+      try {
+        const d = await api(runURL, { cache: false, tries: 0 });
+        const msg = d.msg || d.result || 'Done';
+        toast(msg);
+        if (d.reload) {
+          toast('Reloading with the update');
+          setTimeout(() => native ? window.Android.reloadApp() : location.reload(), 1200);
+        }
+      } catch (e) { toast('Could not reach the update source'); }
+      doBtn.textContent = 'Check now'; doBtn.disabled = false;
+      try { paint(await api(statusURL, { cache: false, tries: 0 })); } catch (e) { }
+    };
+
+    const how = el('div', 'steps4'); how.style.marginTop = '13px';
+    [['Push to Git', 'Run ./release.sh "what changed" in the project. It bumps the version and pushes.'],
+     ['Everyone checks', 'The website checks every 30 minutes, the apps on launch and every six hours.'],
+     ['It just swaps', 'New files download to a temp copy first. Anything broken is rejected and the old version stays.'],
+     ['Undo any time', 'A rollback button here restores the last good version instantly.']]
+      .forEach(([t, d2], i) => how.appendChild(el('div', 'step4', `<b><i>${i + 1}</i>${esc(t)}</b><span>${esc(d2)}</span>`)));
+    v.appendChild(how);
+
+    const adv = el('div', 'chips');
+    const chg = el('button', 'chip', 'Change source');
+    chg.onclick = () => modal(`<h3>Update source</h3>
+      <div class="sb2">The raw address of the folder holding version.json. Leave blank to use the one built in.</div>
+      <input class="inp" id="srcIn" placeholder="https://raw.githubusercontent.com/user/repo/main/">
+      <div class="twobtn"><button class="wb" id="srcNo" style="margin:0">Cancel</button>
+      <button class="wb pri" id="srcYes" style="margin:0">Save</button></div>`, async () => {
+        try { const i = await api(statusURL, { cache: false, tries: 0 }); $('#srcIn').value = i.source || ''; } catch (e) { }
+        $('#srcNo').onclick = closeM;
+        $('#srcYes').onclick = async () => {
+          const u = $('#srcIn').value.trim();
+          closeM();
+          try {
+            await api((native ? '/api/update/source?url=' : '/api/selfupdate/source?url=') + encodeURIComponent(u), { cache: false, tries: 0 });
+            toast('Update source saved');
+            paint(await api(statusURL, { cache: false, tries: 0 }));
+          } catch (e) { toast('Could not save'); }
+        };
+      });
+    adv.appendChild(chg);
+    const rb = el('button', 'chip', 'Roll back');
+    rb.onclick = () => askConfirm('Roll back this update?',
+      'Sonora returns to the last version that was known to work. Your library is not touched.',
+      'Roll back', async () => {
+        try {
+          const d = await api(native ? '/api/update/reset' : '/api/selfupdate/rollback', { cache: false, tries: 0 });
+          toast(d.msg || 'Restored');
+          setTimeout(() => native ? window.Android.reloadApp() : location.reload(), 900);
+        } catch (e) { toast('Nothing to roll back to'); }
+      });
+    adv.appendChild(rb);
+    v.appendChild(adv);
+  }
+
+  v.appendChild(H('Installing', 'A minute, once'));
+  const st = el('div', 'steps4');
+  [['Android', 'Tap the APK, allow installs from this source when Android asks, then Install.'],
+   ['Windows', 'Run SonoraSetup.exe. It installs for your user, so no administrator rights. SmartScreen may warn about an unknown publisher — More info, Run anyway.'],
+   ['macOS', 'Unzip and drag Sonora to Applications. First launch: right-click the app, Open, then Open again. The build is unsigned, so Gatekeeper asks once.'],
+   ['Linux', 'chmod +x the AppImage and run it, or install the .deb with your package manager.'],
+   ['iPhone and iPad', 'Open this page in Safari, tap Share, then Add to Home Screen. No App Store, no download.']]
+    .forEach(([t, d2], i) => {
+      const x = el('div', 'step4', `<b><i>${i + 1}</i>${esc(t)}</b><span>${esc(d2)}</span>`);
+      st.appendChild(x);
+    });
+  v.appendChild(st);
+
+  v.appendChild(H('What differs', 'Honest notes'));
+  const notes = el('div', 'steps4');
+  [['Everything, everywhere', 'Equaliser, sound modes, quality tiers, Golden Era, lyrics, playlists, themes and downloads work in all three builds.'],
+   ['Rooms', 'Listening rooms need a shared server, so they work in the browser and the desktop app, but not the phone build.'],
+   ['Your library', 'Likes, playlists and history live on the device. Settings has export and import if you want to move them.'],
+   ['Updates', 'The Android app updates itself from Git. Desktop and web update when you install a new build.']]
+    .forEach(([t, d2]) => notes.appendChild(el('div', 'step4', `<b>${esc(t)}</b><span>${esc(d2)}</span>`)));
+  v.appendChild(notes);
 }
 
 function vLegal(v) {
@@ -1197,6 +1808,8 @@ function rAct(a, v, optimistic) {
     .catch(() => { toast('Could not reach the room'); return null; });
 }
 const amHost = () => S.snap ? S.snap.host === MYID : S.host;
+const canDrive = () => !S.snap || S.snap.open === true || S.snap.host === MYID;
+const roomOpen = () => !!(S.snap && S.snap.open);
 
 function newCode() { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let c = '';
   for (let i = 0; i < 5; i++) c += A[Math.floor(Math.random() * A.length)]; return c; }
@@ -1213,7 +1826,9 @@ function setRoomLive(v) {
 async function pullRoom() {
   if (!S.room) return;
   try {
+    S._pullAt = Date.now();
     const d = await api('/api/room/state?c=' + S.room, { cache: false, tries: 0 });
+    if (d && d.now) noteLag(S._pullAt, d.now);
     if (d && d.code) { S.snap = d; paintRoom(d); follow(d); setRoomLive(true); }
   } catch (e) { setRoomLive(false); }
 }
@@ -1222,14 +1837,28 @@ function joinRoom(code, host) {
   if (code.length < 3) return toast('That code looks wrong');
   S.room = code; S.host = !!host; SET('room', code); SET('rhost', !!host);
   if (S.es) { try { S.es.close(); } catch (e) { } }
-  S.es = new EventSource('/api/room/sub?c=' + code);
-  S.es.addEventListener('state', e => { try { const d = JSON.parse(e.data);
-    S.snap = d; paintRoom(d); follow(d); setRoomLive(true); } catch (err) { } });
-  S.es.onopen = () => setRoomLive(true);
-  S.es.onerror = () => { setRoomLive(false); };
-  // safety net: poll every 4s so the room still works if SSE is blocked by a proxy
+  /* Live updates arrive over server-sent events, with a 4s poll behind them as
+     a safety net. The net was written but never reachable: if EventSource is
+     missing or its constructor throws — private modes, older WebViews, a few
+     corporate proxies — the throw happened before the poll was ever started,
+     so the room state was set but nothing ever refreshed it. The room looked
+     joined and then sat frozen forever. Now a failure here just means the
+     poll does all the work. */
+  S.es = null;
+  try {
+    if (typeof EventSource === 'function') {
+      S.es = new EventSource('/api/room/sub?c=' + code);
+      S.es.addEventListener('state', e => { try { const d = JSON.parse(e.data);
+        if (d && d.now) noteLag(S._pullAt || Date.now() - 200, d.now);
+        S.snap = d; paintRoom(d); follow(d); setRoomLive(true); } catch (err) { } });
+      S.es.onopen = () => setRoomLive(true);
+      S.es.onerror = () => { setRoomLive(false); };
+    }
+  } catch (e) { S.es = null; }
+  // safety net: poll every 4s so the room still works if SSE is blocked by a
+  // proxy, or unavailable entirely. Poll faster when it is the only channel.
   clearInterval(roomPoll);
-  roomPoll = setInterval(() => { if (S.room && !document.hidden) pullRoom(); }, 4000);
+  roomPoll = setInterval(() => { if (S.room && !document.hidden) pullRoom(); }, S.es ? 4000 : 2000);
   pullRoom();
   rAct('join');
   if (host && S.queue.length) rAct('queue', JSON.stringify(S.queue.slice(0, 60)));
@@ -1248,6 +1877,16 @@ function leaveRoom() {
   toast('You left the room'); render();
 }
 let roomSyncing = false, roomLastId = null;
+let roomLag = 0, roomLagN = 0;          // rolling estimate of one-way delay
+function noteLag(sentAt, serverNow) {
+  const rtt = Date.now() - sentAt;
+  if (rtt < 0 || rtt > 4000) return;
+  const one = rtt / 2;
+  roomLag = roomLagN ? (roomLag * .7 + one * .3) : one;
+  roomLagN++;
+}
+// where the room actually is, right now, allowing for the trip here
+const roomPos = d => (d.playing ? d.pos + (roomLag / 1000) : d.pos);
 function follow(d, force) {
   if (!d || !d.queue || !d.queue.length) return;
   const t = d.queue[d.idx];
@@ -1257,12 +1896,12 @@ function follow(d, force) {
   // adopt the room queue so Up next / Queue views match everyone else
   S.queue = d.queue; S.idx = d.idx; counts();
 
-  if (amHost() && cur && cur.id === t.id) { roomLastId = t.id; return; }
+  if (canDrive() && cur && cur.id === t.id) { roomLastId = t.id; return; }
   if (force || !cur || cur.id !== t.id || roomLastId !== t.id) {
     roomLastId = t.id;
     roomSyncing = true;
     play().then(() => {
-      const target = d.playing ? d.pos : d.at || 0;
+      const target = d.playing ? roomPos(d) : d.at || 0;
       const settle = () => { try { if (isFinite(target) && Math.abs(au.currentTime - target) > 1) au.currentTime = target; } catch (e) { } roomSyncing = false; };
       if (au.readyState >= 2) setTimeout(settle, 260);
       else au.addEventListener('loadeddata', () => setTimeout(settle, 120), { once: true });
@@ -1272,16 +1911,28 @@ function follow(d, force) {
   }
   if (roomSyncing) return;
   if (amHost()) return;                       // host is the clock; never correct them
-  const drift = Math.abs(au.currentTime - d.pos);
-  if (d.playing && drift > 2.2) { try { au.currentTime = d.pos; } catch (e) { } }
+  if (roomOpen() && S._droveAt && Date.now() - S._droveAt < 2500) return;  // just acted; let it settle
+  const want = roomPos(d);
+  const drift = au.currentTime - want;
+  const ad = Math.abs(drift);
+  if (d.playing) {
+    if (ad > 3) { try { au.currentTime = want; } catch (e) { } au.playbackRate = FX.sp / 100; }
+    else if (ad > 0.35) {
+      // nudge the speed instead of jumping — nobody hears a 2% change
+      const base = FX.sp / 100;
+      au.playbackRate = clamp(base * (drift > 0 ? 0.98 : 1.02), 0.25, 4);
+    } else if (Math.abs(au.playbackRate - FX.sp / 100) > 0.001) {
+      au.playbackRate = FX.sp / 100;
+    }
+  }
   if (d.playing && au.paused) au.play().catch(() => toast('Tap play to join the audio'));
   if (!d.playing && !au.paused) au.pause();
 }
 
 /* Guests should not fight the room with local transport controls. */
 function roomGuestGuard() {
-  if (!S.room || amHost()) return false;
-  toast('The host controls playback — use Sync to catch up');
+  if (!S.room || canDrive()) return false;
+  toast('The host controls playback — turn on DJ mode to share it');
   return true;
 }
 
@@ -1364,7 +2015,41 @@ function roomAdd(song) {
 }
 
 /* ---- the Rooms page ---- */
+async function needsRoomHost() {
+  if (!(window.Android && window.Android.isNative)) return false;
+  try { const d = await api('/api/roomhost', { cache: false, tries: 0 }); return !d.host; }
+  catch (e) { return true; }
+}
+function roomHostSetup(v) {
+  v.appendChild(el('div', 'hero', `<h1>Listen <em>together</em></h1>
+    <p>Rooms need a shared address so two phones can meet. Point the app at your own Sonora deployment once — after that everything works exactly like the website.</p>`));
+  v.appendChild(H('Connect a room server', 'One time, on this device'));
+  const w = el('div'); w.style.maxWidth = '470px';
+  w.innerHTML = `<input class="inp" id="rhIn" placeholder="https://sonora-xxxx.onrender.com" autocomplete="off">
+    <button class="wb pri" id="rhGo">Connect</button>
+    <div class="sb2" style="margin-top:12px">Deploy the project to Render (it is free) and paste the address it gives you. See DEPLOY.md in the project.</div>`;
+  v.appendChild(w);
+  $('#rhGo').onclick = async () => {
+    let u = $('#rhIn').value.trim();
+    if (!/^https?:\/\//.test(u)) { toast('Start the address with https://'); return; }
+    u = u.replace(/\/+$/, '');
+    try {
+      await api('/api/roomhost?url=' + encodeURIComponent(u), { cache: false, tries: 0 });
+      toast('Connected — rooms are ready');
+      render();
+    } catch (e) { toast('Could not save that address'); }
+  };
+  v.appendChild(liveStrip());
+}
+
 function vRoom(v) {
+  if (window.Android && window.Android.isNative && !S._roomHostOK) {
+    needsRoomHost().then(need => {
+      if (need) { S._roomHostNeeded = true; if (S.view === 'room') { $('#view').innerHTML = ''; roomHostSetup($('#view')); } }
+      else { S._roomHostOK = true; if (S.view === 'room') render(); }
+    });
+    if (S._roomHostNeeded) return roomHostSetup(v);
+  }
   if (!S.room) {
     v.appendChild(el('div', 'hero', `<h1>Listen <em>together</em></h1>
       <p>Create a room, send one link, and everyone hears the same second of the same song. Shared queue, live chat, instant sync.</p>`));
@@ -1391,7 +2076,7 @@ function vRoom(v) {
   }
 
   const d = S.snap || { users: [], queue: [], chat: [], idx: 0 };
-  v.appendChild(H('Room ' + S.room, amHost() ? 'You are hosting' : 'Listening along'));
+  v.appendChild(H('Room ' + S.room, amHost() ? 'You are hosting' : roomOpen() ? 'DJ mode — you can control playback' : 'Listening along'));
 
   const codebox = el('div', 'codebox', `
     <div><div class="lbl2">Room code</div><div class="cd2">${esc(S.room)}</div></div>
@@ -1402,6 +2087,17 @@ function vRoom(v) {
       <button class="sbtn" id="rLeave">Leave</button>
     </div>`);
   v.appendChild(codebox);
+
+  // DJ mode: host decides whether everyone can drive
+  const modeRow = el('div', 'djrow');
+  const isOpen = roomOpen();
+  modeRow.innerHTML = `<div class="dji"><b>${isOpen ? 'DJ mode — everyone can control' : 'Host mode — one person drives'}</b>
+    <span>${isOpen ? 'Anyone in the room can play, pause, skip and jump.' : 'Only the host controls playback. Everyone can still add tracks.'}</span></div>`;
+  const modeSw = el('div', 'sww' + (isOpen ? ' on' : ''));
+  if (amHost()) modeSw.onclick = () => rAct('open', isOpen ? '0' : '1');
+  else { modeSw.style.opacity = .4; modeSw.style.cursor = 'default'; modeSw.title = 'Only the host can change this'; }
+  modeRow.appendChild(modeSw);
+  v.appendChild(modeRow);
   codebox.querySelector('#rShare').onclick = shareRoom;
   codebox.querySelector('#rCopy').onclick = () => { navigator.clipboard?.writeText(S.room); toast('Code copied — ' + S.room); };
   codebox.querySelector('#rLeave').onclick = () => modal(`<h3>Leave this room?</h3>
@@ -1433,7 +2129,7 @@ function vRoom(v) {
       const songs = d.songs || [];
       if (!songs.length) return rres.innerHTML = '<div class="sb2" style="padding:8px 4px;margin:0">No results.</div>';
       rres.innerHTML = songs.map((t, i) => `<div class="rrq" data-i="${i}">
-        <img loading="lazy" src="${esc(t.img)}" alt="">
+        <img loading="lazy" src="${esc(imgAt(t.img, 50))}" alt="">
         <div style="min-width:0"><div class="q1 cl">${esc(t.t)}</div><div class="q2 cl">${esc(t.a)}</div></div>
         <button class="rrb" data-a="now" title="Play now">Play</button>
         <button class="rrb" data-a="add" title="Add to queue">+</button></div>`).join('');
@@ -1511,7 +2207,7 @@ function paintRoom(d) {
     const q = d.queue || [], cur = q[d.idx], nxt = q[d.idx + 1], after = q[d.idx + 2];
     const done = q.slice(0, d.idx).length, left = Math.max(0, q.length - d.idx - 1);
     nc.innerHTML = `<h4>Now playing ${cur ? `<span class="n2">${d.playing ? 'live' : 'paused'}</span>` : ''}</h4>` + (cur
-      ? `<div class="nowbox big3"><img src="${esc(cur.img)}" alt="">
+      ? `<div class="nowbox big3"><img src="${esc(imgAt(cur.img, 150))}" alt="">
           <div style="min-width:0">
             <div class="t3 cl">${esc(cur.t)}</div>
             <div class="a3 cl">${esc(cur.a)}${cur.al ? ' · ' + esc(cur.al) : ''}</div>
@@ -1524,20 +2220,31 @@ function paintRoom(d) {
       const up = el('div', 'upnext');
       up.innerHTML = `<div class="uphd">Up next</div>` + (nxt
         ? [nxt, after].filter(Boolean).map((t, i) => `<div class="upi">
-            <span class="upn">${i + 1}</span><img src="${esc(t.img)}" alt="">
+            <span class="upn">${i + 1}</span><img loading="lazy" src="${esc(imgAt(t.img, 50))}" alt="">
             <div style="min-width:0"><div class="q1 cl">${esc(t.t)}</div><div class="q2 cl">${esc(t.a)}</div></div></div>`).join('')
         : `<div class="sb2" style="margin:0;font-size:11.5px">Nothing after this one. Add a track below.</div>`)
         + `<div class="upsum">${done} played · ${left} still to come</div>`;
       nc.appendChild(up);
 
+      const drive = canDrive();
       const ctr = el('div', 'chips');
-      const b = (t, fn, dis) => { const x = el('button', 'sbtn', t); x.onclick = fn; if (dis) x.style.opacity = .45; return x; };
+      const b = (t, fn, dis) => { const x = el('button', 'sbtn', t); x.onclick = fn; if (dis) x.style.opacity = .4; return x; };
+      const denied = () => toast('The host controls playback — ask them to turn on DJ mode');
       ctr.append(
-        b('Previous', () => host ? rAct('prev', undefined, sn => { sn.idx = Math.max(0, sn.idx - 1); }) : toast('Only the host can control playback'), !host),
-        b(d.playing ? 'Pause' : 'Play', () => host ? rAct(d.playing ? 'pause' : 'play', undefined, sn => { sn.playing = !sn.playing; }) : toast('Only the host can control playback'), !host),
-        b('Next', () => host ? rAct('next', undefined, sn => { sn.idx = Math.min((sn.queue?.length || 1) - 1, sn.idx + 1); }) : toast('Only the host can control playback'), !host),
-        b('Sync to room', () => { follow(d, true); toast('Syncing with the room'); }));
+        b('Previous', () => drive ? (S._droveAt = Date.now(), rAct('prev', undefined, sn => { sn.idx = Math.max(0, sn.idx - 1); })) : denied(), !drive),
+        b(d.playing ? 'Pause' : 'Play', () => drive ? (S._droveAt = Date.now(), rAct(d.playing ? 'pause' : 'play', undefined, sn => { sn.playing = !sn.playing; })) : denied(), !drive),
+        b('Next', () => drive ? (S._droveAt = Date.now(), rAct('next', undefined, sn => { sn.idx = Math.min((sn.queue?.length || 1) - 1, sn.idx + 1); })) : denied(), !drive),
+        b('Sync now', () => { follow(d, true); toast('Catching up with the room'); }));
       nc.appendChild(ctr);
+
+      // how far off this device is
+      const off = Math.abs(au.currentTime - roomPos(d));
+      const good = off < .6, ok2 = off < 2;
+      const sq = el('div', 'syncline' + (good ? ' good' : ok2 ? ' ok' : ' bad'));
+      sq.innerHTML = `<span class="sdot"></span>` +
+        (good ? 'Perfectly in sync' : ok2 ? `Off by ${off.toFixed(1)}s — correcting` : `Off by ${off.toFixed(1)}s`) +
+        (roomLagN ? `<em>${Math.round(roomLag)}ms delay</em>` : '');
+      nc.appendChild(sq);
     }
   }
 
@@ -1546,10 +2253,32 @@ function paintRoom(d) {
   if (mm) {
     const us = d.users || [];
     $('#rmN') && ($('#rmN').textContent = us.length || 1);
-    mm.innerHTML = us.map((u, i) => `<span class="mem${u.id === MYID ? ' you' : ''}" style="animation-delay:${i * .04}s">
+    mm.innerHTML = us.map((u, i) => `<span class="mem${u.id === MYID ? ' you' : ''}${u.host ? ' host' : ''}"
+      data-uid="${esc(u.id)}" style="animation-delay:${i * .04}s"
+      title="${amHost() && !u.host ? 'Make host' : ''}">
       <span class="av">${esc(avat(u.n))}</span>${esc(u.n)}${u.id === MYID ? ' (you)' : ''}
       ${u.host ? '<svg class="crown" viewBox="0 0 24 24"><path d="M4 18h16M4 18 3 7l5 4 4-6 4 6 5-4-1 11"/></svg>' : ''}</span>`).join('')
       || '<span class="sb2" style="margin:0">Just you for now</span>';
+    if (amHost()) mm.querySelectorAll('.mem:not(.host)').forEach(el2 => {
+      el2.style.cursor = 'pointer';
+      el2.onclick = () => {
+        const uid = el2.dataset.uid, nm = el2.textContent.trim();
+        modal(`<h3>Make ${esc(nm)} the host?</h3>
+          <div class="sb2">They will control playback for everyone. You can be made host again later.</div>
+          <div class="twobtn"><button class="wb" id="hNo" style="margin:0">Cancel</button>
+          <button class="wb pri" id="hYes" style="margin:0">Make host</button></div>`, () => {
+          $('#hNo').onclick = closeM;
+          $('#hYes').onclick = () => { closeM(); rAct('host', uid); };
+        });
+      };
+    });
+    // nobody is host (they left) — offer to take over
+    if (!us.some(u => u.host)) {
+      const t = el('button', 'sbtn', 'Take over as host');
+      t.style.marginTop = '10px';
+      t.onclick = () => rAct('claim');
+      mm.parentNode.appendChild(t);
+    }
   }
 
   /* queue */
@@ -1568,9 +2297,9 @@ function paintRoom(d) {
       <button class="wb pri" id="htGo" style="margin-top:14px">Browse music</button></div>`;
     else ql.innerHTML = q.map((t, i) => `<div class="rqi${i === d.idx ? ' on' : ''}${i < d.idx ? ' past' : ''}" data-i="${i}" style="animation-delay:${Math.min(i, 12) * .025}s">
       <span class="qn">${i === d.idx ? '<span class="eqi"><i></i><i></i><i></i></span>' : i + 1}</span>
-      <img loading="lazy" src="${esc(t.img)}" alt="">
+      <img loading="lazy" src="${esc(imgAt(t.img, 50))}" alt="">
       <div style="min-width:0"><div class="q1 cl">${esc(t.t)}</div>
-        <div class="q2 cl">${i === d.idx ? 'Playing now' : i === d.idx + 1 ? 'Up next · ' + esc(t.a) : i < d.idx ? 'Played · ' + esc(t.a) : esc(t.a)}</div></div>
+        <div class="q2 cl">${i === d.idx ? 'Playing now' : i === d.idx + 1 ? 'Up next · ' + esc(t.a) : i < d.idx ? 'Played · ' + esc(t.a) : esc(t.a)}${t.by ? ' <em class="byline">· ' + esc(t.by) + '</em>' : ''}</div></div>
       <button class="qx" data-rm="${i}" title="Remove"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
     const hg = $('#htGo'); if (hg) hg.onclick = () => nav('trend');
     ql.querySelectorAll('.rqi').forEach(r => {
@@ -1724,21 +2453,41 @@ function fsRender() {
 let vR;
 function startViz() {
   const cv = $('#viz'); if (!cv || !anN) return;
-  const g = cv.getContext('2d'), n = anN.frequencyBinCount, arr = new Uint8Array(n);
+  const g = cv.getContext('2d', { alpha: true, desynchronized: true });
+  const n = anN.frequencyBinCount, arr = new Uint8Array(n);
   cancelAnimationFrame(vR);
   const cs = getComputedStyle(document.body);
   const c1 = cs.getPropertyValue('--ac').trim() || '#d4ff3f', c2 = cs.getPropertyValue('--ac2').trim() || '#7ef29d';
+
+  /* One gradient, made once. The old loop built a fresh CanvasGradient for
+     every bar on every frame — 64 allocations 60 times a second, all of them
+     thrown away immediately. The gradient only depends on the canvas height,
+     so it can be reused for the whole run and the per-bar variation done with
+     globalAlpha, exactly as before. */
+  const fsEl = $('#fs');
+  let H = cv.height, grad = null;
+  const mkGrad = () => { grad = g.createLinearGradient(0, H, 0, 0); grad.addColorStop(0, c1); grad.addColorStop(1, c2); };
+  mkGrad();
+
+  const bars = 64, st = Math.max(1, Math.floor(n / bars / 1.6));
   const loop = () => {
-    if (!$('#fs').classList.contains('open') || S.fsTab !== 'art') return;
-    anN.getByteFrequencyData(arr); g.clearRect(0, 0, cv.width, cv.height);
-    const bars = 64, st = Math.floor(n / bars / 1.6), w = cv.width / bars;
+    // stop when the view is gone, and also when the tab is hidden or the
+    // track is paused — there is nothing to draw and no one to see it
+    if (!fsEl || !fsEl.classList.contains('open') || S.fsTab !== 'art') { vR = 0; return; }
+    if (document.hidden || au.paused) { vR = requestAnimationFrame(loop); return; }
+
+    if (cv.height !== H) { H = cv.height; mkGrad(); }
+    anN.getByteFrequencyData(arr);
+    g.clearRect(0, 0, cv.width, H);
+    g.fillStyle = grad;
+    const w = cv.width / bars, bw = w - 3, r2 = Math.min(bw / 2, 2.5);
     for (let i = 0; i < bars; i++) {
-      const v = arr[i * st] / 255, h = Math.max(3, Math.pow(v, .82) * cv.height);
-      const gr = g.createLinearGradient(0, cv.height, 0, cv.height - h);
-      gr.addColorStop(0, c1); gr.addColorStop(1, c2);
-      g.fillStyle = gr; g.globalAlpha = .35 + v * .65;
-      const bw = w - 3, x = i * w + 1.5, r2 = Math.min(bw / 2, 2.5);
-      g.beginPath(); g.roundRect ? g.roundRect(x, cv.height - h, bw, h, r2) : g.rect(x, cv.height - h, bw, h); g.fill();
+      const v = arr[i * st] / 255, h = Math.max(3, Math.pow(v, .82) * H);
+      g.globalAlpha = .35 + v * .65;
+      const x = i * w + 1.5;
+      g.beginPath();
+      if (g.roundRect) g.roundRect(x, H - h, bw, h, r2); else g.rect(x, H - h, bw, h);
+      g.fill();
     }
     g.globalAlpha = 1;
     vR = requestAnimationFrame(loop);
@@ -1957,14 +2706,22 @@ $('#back').onclick = () => { if ($('#fs').classList.contains('open')) return $('
 $('#main').addEventListener('scroll', () => $('#topbar').classList.toggle('stuck', $('#main').scrollTop > 8), { passive: true });
 
 let sI = -1;
+/* Debouncing alone does not stop a slow reply from a query you have already
+   moved on from landing last and overwriting the list. On a patchy connection
+   that shows you suggestions for something you are no longer typing. Each
+   request now carries a sequence number and anything stale is dropped. */
+let sSeq = 0;
 $('#q').addEventListener('input', e => {
   const q = e.target.value.trim(); clearTimeout(sT);
+  sSeq++;                                   // invalidate anything in flight
   if (q.length < 2) return $('#sug').classList.remove('open');
+  const mine = sSeq;
   sT = setTimeout(async () => {
     try { const d = await api('/api/suggest?q=' + encodeURIComponent(q), { tries: 0 });
+      if (mine !== sSeq) return;            // a newer keystroke has taken over
       const s = $('#sug'); s.innerHTML = ''; sI = -1;
       if (!d.items?.length) return s.classList.remove('open');
-      d.items.forEach(it => { const r = el('div', 'sgi', `<img loading="lazy" src="${it.img}">
+      d.items.forEach(it => { const r = el('div', 'sgi', `<img loading="lazy" src="${imgAt(it.img, 50)}">
           <div style="min-width:0"><div class="a cl">${esc(it.t)}</div><div class="b cl">${esc(it.s)}</div></div>
           <span class="c">${esc(it.k)}</span>`);
         r.onclick = () => { s.classList.remove('open');
@@ -1986,8 +2743,8 @@ $('#q').addEventListener('keydown', e => {
 document.addEventListener('click', e => { if (!e.target.closest('.srch')) $('#sug').classList.remove('open'); });
 
 $('#play').onclick = toggle; $('#play2').onclick = toggle; $('#mPlay').onclick = () => { buzz(); toggle(); };
-$('#next').onclick = $('#next2').onclick = () => { if (S.room) { if (amHost()) return rAct('next'); return roomGuestGuard(); } skip(false); };
-$('#prev').onclick = $('#prev2').onclick = () => { if (S.room) { if (amHost()) return rAct('prev'); return roomGuestGuard(); } prevTrack(); };
+$('#next').onclick = $('#next2').onclick = () => { if (S.room) { if (canDrive()) { S._droveAt = Date.now(); return rAct('next'); } return roomGuestGuard(); } skip(false); };
+$('#prev').onclick = $('#prev2').onclick = () => { if (S.room) { if (canDrive()) { S._droveAt = Date.now(); return rAct('prev'); } return roomGuestGuard(); } prevTrack(); };
 const shufFn = () => { S.shuffle = !S.shuffle; $('#shuf').classList.toggle('on', S.shuffle); $('#shuf2').classList.toggle('on', S.shuffle); toast('Shuffle ' + (S.shuffle ? 'on' : 'off')); };
 $('#shuf').onclick = $('#shuf2').onclick = shufFn;
 const repFn = () => { S.repeat = S.repeat === 'off' ? 'all' : S.repeat === 'all' ? 'one' : 'off';
@@ -2030,20 +2787,49 @@ wireSeek('#sk', '#fl', '#hdl', '#tc'); wireSeek('#sk2', '#fl2', '#hd2', '#tc2');
 
 let lastTick = 0;
 function tickAll() { tickRoomProgress(); tickLyrics(); }
-function tickRoomProgress() {
-  const f = $('#rpFill'); if (!f) return;
-  const p = au.duration ? au.currentTime / au.duration : 0;
-  f.style.width = (p * 100) + '%';
-  const t = $('#rpTime'); if (t) t.textContent = fmt(au.currentTime) + ' / ' + fmt(au.duration);
+
+/* The progress tick runs about four times a second for as long as anything is
+   playing. It used to re-query eleven elements and rewrite every one of them
+   on each pass — roughly 2,200 pointless DOM operations a minute, most of them
+   setting a value to what it already was, and most of them on bars nobody was
+   looking at.
+
+   Now the nodes are looked up once and kept, and each write is guarded by the
+   value it last wrote. A progress bar only moves when its rounded percentage
+   actually changes, and the clocks only change when the second does. */
+const TE = {};                       // cached element handles
+function te(id) {
+  const n = TE[id];
+  // re-look-up when we have never seen it, when it was missing last time, or
+  // when the node we cached has since been replaced by a re-render
+  if (!n || !n.isConnected) return (TE[id] = document.getElementById(id));
+  return n;
 }
+const TW = {};                       // last value written per element
+function setW(id, v) { if (TW[id] !== v) { const n = te(id); if (n) { n.style.width = v; TW[id] = v; } } }
+function setL(id, v) { if (TW['L' + id] !== v) { const n = te(id); if (n) { n.style.left = v; TW['L' + id] = v; } } }
+function setT(id, v) { if (TW['T' + id] !== v) { const n = te(id); if (n) { n.textContent = v; TW['T' + id] = v; } } }
+
+function tickRoomProgress() {
+  const f = te('rpFill'); if (!f) return;
+  const p = au.duration ? au.currentTime / au.duration : 0;
+  setW('rpFill', (p * 100).toFixed(2) + '%');
+  if (te('rpTime')) setT('rpTime', fmt(au.currentTime) + ' / ' + fmt(au.duration));
+}
+
 au.ontimeupdate = () => {
   tickAll();
-  if (au.duration) { const p = au.currentTime / au.duration;
-    if (!$('#sk').classList.contains('dg')) { $('#fl').style.width = p * 100 + '%'; $('#hdl').style.left = p * 100 + '%'; }
-    if (!$('#sk2').classList.contains('dg')) { $('#fl2').style.width = p * 100 + '%'; $('#hd2').style.left = p * 100 + '%'; }
-    $('#mPrg').style.width = p * 100 + '%'; }
+  if (au.duration) {
+    // two decimals is finer than any screen can show, and it stops a value
+    // that is drifting in the twelfth decimal place from causing a write
+    const p = (au.currentTime / au.duration * 100).toFixed(2) + '%';
+    const sk = te('sk'), sk2 = te('sk2');
+    if (sk && !sk.classList.contains('dg')) { setW('fl', p); setL('hdl', p); }
+    if (sk2 && !sk2.classList.contains('dg')) { setW('fl2', p); setL('hd2', p); }
+    setW('mPrg', p);
+  }
   const c = fmt(au.currentTime), d = fmt(au.duration);
-  $('#tc').textContent = c; $('#td').textContent = d; $('#tc2').textContent = c; $('#td2').textContent = d;
+  setT('tc', c); setT('td', d); setT('tc2', c); setT('td2', d);
   const n = Date.now(); if (n - lastTick > 5000 && !au.paused) { S.stats.secs += 5; lastTick = n; save(); }
 };
 au.onprogress = () => { try { if (au.buffered.length && au.duration) $('#bf').style.width = (au.buffered.end(au.buffered.length - 1) / au.duration * 100) + '%'; } catch (e) { } };
@@ -2056,7 +2842,7 @@ au.onplay = () => { icons(); markRows(); if ($('#fs').classList.contains('open')
 au.onpause = () => { icons(); markRows(); };
 au.onended = () => {
   if (S.tmrEnd === -1) { S.tmrEnd = 0; return toast('Sleep timer stopped playback'); }
-  if (S.room) { if (amHost()) rAct('next'); return; }
+  if (S.room) { if (amHost()) rAct('next'); return; }   // only the host advances, or everyone would race
   skip(true);
 };
 au.onerror = () => { if (!au.src) return; errN++;
@@ -2096,6 +2882,14 @@ $('#cmdInput').addEventListener('keydown', e => {
   else if (e.key === 'Escape') closeCmd();
 });
 $('#cmdk').addEventListener('click', e => { if (e.target.id === 'cmdk') closeCmd(); });
+(() => {
+  const g = $('#getBtn');
+  if (!g) return;
+  if ((window.Android && window.Android.isNative) || (window.Desktop && window.Desktop.isDesktop)) {
+    g.style.display = 'none';
+    document.querySelectorAll('.nav[data-v="get"]').forEach(n => n.style.display = 'none');
+  } else g.onclick = () => nav('get');
+})();
 $('#chatFab').onclick = () => toggleDock();
 $('#cdMin').onclick = () => toggleDock(false);
 (() => { const send = () => { const v = $('#cdInput').value.trim(); if (!v) return;
@@ -2291,9 +3085,12 @@ setTimeout(() => {
 }, 5000);
 beat(); liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
-addEventListener('online', () => { setNet(false); MEM.clear(); });
+addEventListener('online', () => { setNet(false); MEM.clear(); netFails = 0; render(); });
 addEventListener('offline', () => setNet(true, 'You are offline'));
+if (netQueued) { const [d, m] = netQueued; netQueued = null; setNet(d, m); }
 if (!navigator.onLine) setNet(true, 'You are offline');
+// a stale-served page still deserves the banner
+setTimeout(() => { if (netFails > 0 && !navigator.onLine) setNet(true, 'You are offline'); }, 1200);
 if (S.room && !S.es) {
   const saved = S.room; S.room = null;          // let joinRoom wire everything up
   setTimeout(() => joinRoom(saved, LS('rhost', false)), 300);

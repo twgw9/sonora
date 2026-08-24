@@ -6,6 +6,64 @@ downloads, live listening rooms and a live listener counter.
 
 ---
 
+## Builds currently published
+
+Every file below is in `downloads/` and is served by the Get the App page.
+
+| Platform | File | Size | Notes |
+|---|---|---|---|
+| Android | `Sonora.apk` | 2.8 MB | v1.8, signed v2 + v3, Android 7.0+ |
+| Windows | `SonoraSetup.exe` | 67 MB | NSIS installer, per-user, no admin rights |
+| macOS | `Sonora-mac.zip` | 91 MB | x64 `.app`, unsigned, runs on Apple silicon via Rosetta |
+| Linux | `Sonora-1.0.0.AppImage` | 71 MB | runs anywhere, no install |
+| Linux | `sonora-desktop_1.0.0_amd64.deb` | 64 MB | Debian, Ubuntu, Mint |
+| iPhone, iPad | — | — | installs from Safari via Add to Home Screen |
+
+macOS ships as a `.zip` rather than a `.dmg` because a `.dmg` can only be
+produced on a Mac. Run `cd desktop && ./build.sh mac` on a Mac to get one.
+
+## Desktop app — Windows, macOS, Linux
+
+```bash
+cd desktop && ./build.sh
+```
+
+Electron shell that runs the real `server.js` in-process, so it has everything
+the website has, **including listening rooms**. Adds global media keys, taskbar
+progress, a tray icon and a mini player. See `desktop/README.md`.
+
+The Windows installer is built with NSIS, which runs on Linux. `build.sh` looks
+for `makensis` in the electron-builder cache; on a plain Debian or Ubuntu box
+`apt-get install nsis` works too.
+
+## iPhone and iPad
+
+Apple does not allow this kind of music app in the App Store, so there is no
+`.ipa`. Open the site in **Safari**, tap **Share**, then **Add to Home Screen**.
+It gets its own icon and opens full screen with no browser chrome. Everything
+works except background playback when the screen locks, which Apple blocks for
+web apps. The Get the App page has a step-by-step guide.
+
+## Android app
+
+```bash
+./build-apk.sh          # → apk/Sonora.apk
+```
+
+Installs directly, no Play Store. The whole backend is reimplemented in Java
+(`android/.../LocalServer.java`) and runs inside the APK on `127.0.0.1`, so
+there is no server to deploy. See `apk/INSTALL.md` and `apk/UPDATE.md`.
+Listening rooms need the hosted build.
+
+## Updating installed apps from Git
+
+```bash
+./release.sh "what changed"
+```
+
+The interface is downloaded from your repo, so pushing ships it to every phone —
+no new APK. Only native changes need a rebuild. See `apk/OTA.md`.
+
 ## Deploy to Render
 
 Push to GitHub → Render → **New Web Service** → connect the repo.
