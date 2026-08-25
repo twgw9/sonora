@@ -1,116 +1,97 @@
-<div align="center">
+# Sonora — Disclaimer, Copyright and Legal Notice
 
-<img src="logo.svg" alt="Sonora" width="96" height="96">
-
-# Sonora
-
-**A personal music player.**
-No account, no advertising, no tracking, nothing stored on a server.
-
-[![License](https://img.shields.io/badge/license-MIT-d4ff3f?style=flat-square)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-Android%20%C2%B7%20Windows%20%C2%B7%20macOS%20%C2%B7%20Linux%20%C2%B7%20Web-1f2226?style=flat-square)](#)
-[![Telegram](https://img.shields.io/badge/Telegram-join-2ea6da?style=flat-square&logo=telegram&logoColor=white)](https://t.me/sonoramusicm)
-
-</div>
+**Last updated: 2026-08-25. Please read this before using, redistributing or
+building on Sonora.** It is written to be published as-is.
 
 ---
 
-## Read this before you use or share Sonora
+## 1. What Sonora is and is not
 
-Sonora is a **client**. It is a player and a browser for music, in the same way
-a web browser is a client for websites. It contains no music. It hosts no
-music. It does not upload, store, cache on any server, sell, or redistribute a
-single second of audio.
+Sonora is a **player application** — an interface with a real 7-band
+equaliser, sound modes, synced lyrics, downloads and listening rooms. It is
+**not a content provider**:
 
-What it does is talk to a public endpoint that a third-party music service
-already serves to its own website, and render the result with a better
-equaliser and a nicer interface. Every stream you hear is delivered directly
-from that service's own content network to your own device. Nothing passes
-through anything the author of Sonora controls.
+- Sonora hosts **no audio, no artwork, no lyrics of its own**.
+- Music metadata is fetched from a third-party catalogue service
+  (JioSaavn / Saavn) through an endpoint that service publishes for its own
+  website. Sonora has no agreement with that service; the API is neither
+  licensed nor authorised for third-party use and may be changed, limited
+  or blocked at any time.
+- Audio streams are served directly from that service's CDN to the
+  listener's device. Sonora's servers do not store, transcode or
+  redistribute any audio.
 
-That distinction matters, and it also has limits. They are set out plainly
-below rather than buried, because you should be able to decide for yourself
-whether to run this.
+## 2. Copyright
 
----
+All music, artwork, lyrics and other audio-visual content accessible through
+Sonora is the property of its respective owners:
 
-## Ownership
+- **record labels, artists, composers and publishers** who own the
+  recordings, compositions and cover art, and
+- **the catalogue service** (JioSaavn/Saavn) and its licensors.
 
-**Every recording, composition, lyric, cover image and trademark reachable
-through Sonora belongs to its rightful owner** — the artists, songwriters,
-composers, producers, labels, publishers and rights societies who made and own
-that work. None of it belongs to Sonora or to the author of Sonora, and no
-claim of ownership, licence, endorsement or affiliation is made over any of it.
+No ownership is claimed over any of it. Nothing in this project grants any
+right to that content.
 
-Sonora is not affiliated with, endorsed by, sponsored by, or connected to any
-music service, label, distributor or rights holder whose material may be
-reachable through it. Any names or marks that appear do so only to identify
-the work, which is nominative use, and remain the property of their owners.
+## 3. Usage at your own risk
 
-## What is actually licensed
+You are responsible for how you use Sonora:
 
-The MIT licence in this repository covers **the source code of Sonora and
-nothing else** — the player, the audio engine, the interface, the build
-scripts. It grants you no rights whatsoever over any music, artwork or
-metadata you may reach with it. Those rights are not the author's to give.
+- Laws on streaming, downloading and private/public playback differ by
+  country. What is lawful where you live is **your** responsibility to
+  determine.
+- **Private, personal listening** is the least risky use.
+- **Downloading files, public playback, or redistribution of any content**
+  is materially riskier and may infringe copyright in your jurisdiction.
+- The operators of Sonora provide it "as is" with **no warranty** and accept
+  **no liability** for any use, infringement or loss arising from it.
 
-## The legal position, stated honestly
+## 4. Takedowns and rights-holders
 
-Sonora reads an API that its operator publishes for their own front end and
-has not opened to third parties. It is not an authorised client, it holds no
-partnership or API agreement, and the operator may change, restrict or block
-that endpoint at any time, without notice, which would simply stop it working.
+If you are a rights-holder and believe content should be removed or
+restricted:
 
-Whether using it is lawful **depends entirely on where you live and what you do
-with it**. Copyright, private-copying and communication-to-the-public rules
-differ sharply between countries, and nothing here is legal advice. Downloading
-a copy, playing music in public, or sharing what you have downloaded is a
-materially different act from listening privately, and is far more likely to be
-unlawful wherever you are.
+1. Contact us on Telegram: **https://t.me/sonoramusicm** (the fastest route),
+   or open an issue on **https://github.com/twgw9/sonora**.
+2. Include the specific items (song/album/artwork), and proof of ownership.
+3. Because no media passes through Sonora's servers, the practical remedy is
+   removal of the metadata entry and/or the whole project — which we will do
+   promptly and without argument on a valid request.
 
-**You are responsible for your own use.** Satisfy yourself that it is lawful in
-your jurisdiction before you run it.
+## 5. Licence (code only)
 
-## No warranty
+The **code** in this repository (HTML, CSS, JavaScript, Electron shell,
+server, build scripts, documentation text authored by the project) is
+licensed under the **MIT Licence** — see `LICENSE`. That licence covers **the
+code only**. It does **not** cover the music, artwork or lyrics reachable
+through it, which remain the property of their owners and are not offered,
+licensed or conveyed by this repository in any way. Forking, modifying and
+redistributing the code does not transfer any content rights.
 
-Provided **as is**, with no warranty of any kind, express or implied, including
-merchantability, fitness for a particular purpose and non-infringement. To the
-maximum extent the law allows, the author accepts no liability for any claim,
-damage, loss or other liability arising from Sonora or its use — including any
-claim brought by a rights holder against a user.
+No attribution, credit or fee is given or implied for any content that the
+application happens to render.
 
-## Please do not
+## 6. Data and privacy (summary)
 
-- Sell Sonora, or sell access to it, or put advertising on it
-- Run it as a public service for strangers, or present it as a licensed product
-- Present it as official, or as connected to any music service or label
-- Remove this notice, or the attribution, from a copy you pass on
-- Use it to download, publish, broadcast or redistribute music you have no right to
+- Accounts: **none**. Sonora has no login, no user database, no tracking
+  cookies.
+- Your library (likes, playlists, history, settings) stays **on your
+  device** (localStorage). Export it from Settings if you want a backup.
+- The optional self-update feature reads the version file from the repository
+  listed in `version.json`; the update source is baked in and cannot be
+  redirected by a user.
+- Requests to the catalogue service reveal your IP address to that service,
+  as with any direct stream. See DEPLOY.md for the hosted server's logging.
 
-Doing any of these turns a personal player into distribution, and moves the
-exposure squarely onto you.
+## 7. Third-party services
 
-## If you own something reachable through this
+- **JioSaavn / Saavn** — catalogue metadata and audio CDN; their own terms
+  of service apply to their content.
+- **LRCLIB** — open synced-lyrics database (CC-BY-NC-SA for its data);
+  used as a supplemental lyrics source when the primary one has none.
 
-Please open an issue on this repository, or write to the address in the
-project profile, identifying the work. **Requests are honoured promptly and
-without argument.** Because Sonora hosts nothing, the practical remedy is to
-block the identifying route, and that will be done on request. A takedown is
-also welcome directly to the upstream service, which is where the files
-actually live.
+## 8. Changes
 
-## Support the artists
-
-This exists because good music deserves a good player, not because anyone
-should stop paying for music. If a song here matters to you, **buy it, stream
-it on a licensed service that pays royalties, go to the show, buy the record**.
-None of that money reaches the artist through Sonora.
-
----
-
-<div align="center">
-
-<sub>Made for listening. Not for profit, not for distribution.</sub><br>
-<sub><a href="https://t.me/sonoramusicm">Telegram</a> · <a href="LICENSE">MIT licence</a></sub>
-
-</div>
+This document may be updated as the project changes; the date at the top is
+the authoritative version. Continuing to use Sonora after an update means
+you accept the revised terms.

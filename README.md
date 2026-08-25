@@ -1,5 +1,8 @@
 # SONORA
 
+<img src="banner.png" alt="Sonora banner" width="100%">
+
+
 Premium music streaming — real 7-band equaliser, 16 studio sound modes, offline
 downloads, live listening rooms and a live listener counter.
 **Zero npm dependencies.**
@@ -8,19 +11,32 @@ downloads, live listening rooms and a live listener counter.
 
 ## Builds currently published
 
-Every file below is in `downloads/` and is served by the Get the App page.
+The desktop installers are 60-90 MB each, so they never live in git. They are
+built and published automatically by `.github/workflows/release.yml`: push a
+changed `version.json` (that is what `./release.sh "message"` does) and
+GitHub Actions builds everything on its own runners and attaches it all to a
+Release tagged `vN`. The Get the App page links straight to that Release.
+The one committed binary is `apk/Sonora.apk` (2.8 MB), so Android works even
+before a Release exists.
 
-| Platform | File | Size | Notes |
-|---|---|---|---|
-| Android | `Sonora.apk` | 2.8 MB | v1.8, signed v2 + v3, Android 7.0+ |
-| Windows | `SonoraSetup.exe` | 67 MB | NSIS installer, per-user, no admin rights |
-| macOS | `Sonora-mac.zip` | 91 MB | x64 `.app`, unsigned, runs on Apple silicon via Rosetta |
-| Linux | `Sonora-1.0.0.AppImage` | 71 MB | runs anywhere, no install |
-| Linux | `sonora-desktop_1.0.0_amd64.deb` | 64 MB | Debian, Ubuntu, Mint |
-| iPhone, iPad | — | — | installs from Safari via Add to Home Screen |
+| Platform | File | Produced by |
+|---|---|---|
+| Android | `Sonora.apk` | committed in `apk/` (prebuilt, signed) |
+| Windows | `SonoraSetup.exe` | workflow, windows-latest, NSIS |
+| macOS | `Sonora-1.0.0-mac-{x64,arm64}.dmg` + `.zip` | workflow, macos-latest |
+| Linux | `Sonora-1.0.0-{x86_64}.AppImage` + `.deb` | workflow, ubuntu-latest |
+| iPhone, iPad | — | installs from Safari via Add to Home Screen |
 
-macOS ships as a `.zip` rather than a `.dmg` because a `.dmg` can only be
-produced on a Mac. Run `cd desktop && ./build.sh mac` on a Mac to get one.
+Manual path (no GitHub Actions): `cd desktop && ./build.sh` copies the builds
+into `downloads/`, then `./publish.sh` uploads them to a Release with the
+GitHub CLI. A local file in `downloads/` always wins over the Release, so a
+deploy can also carry its own binaries.
+
+## Social preview
+
+The `banner.png` at the root is the repository/Telegram social preview -
+set it in **Repo Settings → Social preview** (GitHub) and in the channel
+settings if you repost on Telegram.
 
 ## Desktop app — Windows, macOS, Linux
 

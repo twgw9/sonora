@@ -6,7 +6,7 @@
    controls, global media keys, a tray icon, and desktop-only niceties.
    ===================================================================== */
 'use strict';
-const { app, BrowserWindow, Menu, Tray, shell, globalShortcut, ipcMain, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, Tray, shell, globalShortcut, ipcMain, dialog, nativeImage, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -14,6 +14,9 @@ const http = require('http');
 const PORT = 8732;
 let win = null, tray = null, server = null, serverReady = false;
 let quitting = false;
+/* Windows taskbar / toast identity — without this the notification and the
+   taskbar group the window under "electron" instead of Sonora. */
+if (process.platform === 'win32') app.setAppUserModelId('com.sonora.player');
 
 /* ---------- single instance ---------- */
 if (!app.requestSingleInstanceLock()) { app.quit(); }
@@ -92,10 +95,16 @@ function createWindow() {
     });
   });
 
+  let closeHinted = false;
   win.on('close', e => {
     if (quitting || process.platform !== 'win32') return;
     // keep playing in the tray on Windows
     e.preventDefault(); win.hide();
+    // say it once so closing never looks like the app vanished
+    if (!closeHinted) { closeHinted = true;
+      try { new Notification({ title: 'Sonora is still playing', body: 'It stays in the tray — right-click the tray icon to quit.' }).show(); }
+      catch (err) { }
+    }
   });
   win.on('closed', () => { win = null; });
 }
@@ -134,7 +143,9 @@ function buildMenu() {
         { label: 'Search', accelerator: 'CmdOrCtrl+F', click: () => send('focus-search') },
         { label: 'Command palette', accelerator: 'CmdOrCtrl+K', click: () => send('palette') },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' }
+        isMac ? { role: 'close' }
+          : { label: 'Close window (keeps playing)', click: () => { if (win) win.close(); } },
+        { label: 'Quit Sonora', accelerator: 'CmdOrCtrl+Q', click: () => { quitting = true; app.quit(); } }
       ]
     },
     {

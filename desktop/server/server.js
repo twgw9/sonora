@@ -246,7 +246,7 @@ const ipOf = req => (req.headers['x-forwarded-for'] || '').split(',')[0].trim() 
 const R = {};
 
 /* ---------------- self update from Git ---------------- */
-const OTA_FILES = ['index.html', 'app.js', 'styles.css', 'desktop-hooks.js', 'logo.svg', 'icon.svg'];
+const OTA_FILES = ['index.html', 'app.js', 'styles.css', 'desktop-hooks.js', 'logo.svg', 'icon.svg', 'sw.js'];
 let otaBusy = false;
 
 function otaSource() {
@@ -268,10 +268,11 @@ function otaSource() {
   }
   return '';
 }
-function otaSaveSource(u) {
-  try { require('fs').writeFileSync(require('path').join(ROOT, 'update.json'),
-    JSON.stringify({ source: u }, null, 2)); return true; } catch (e) { return false; }
-}
+/* The update source is deliberately NOT user-editable (see PART 5, bug 36).
+   otaSaveSource() and the /api/selfupdate/source route were removed: a field
+   that repoints the app at any URL is a way to hand someone a link that
+   turns their copy into something else entirely. The source now comes only
+   from update.json / version.json / env — all operator-controlled. */
 function localVersion() {
   try { return JSON.parse(require('fs').readFileSync(require('path').join(ROOT, 'version.json'), 'utf8')).version || 0; }
   catch (e) { return 0; }
@@ -283,13 +284,6 @@ R['/api/selfupdate/status'] = async () => ({
   canUpdate: !!otaSource(), auto: !!otaSource(),
   lastMsg: otaLast.msg, lastAt: otaLast.at
 });
-
-R['/api/selfupdate/source'] = async q => {
-  let u = String(q.get('url') || '').trim();
-  if (u && !u.endsWith('/')) u += '/';
-  otaSaveSource(u);
-  return { ok: true, source: otaSource() };
-};
 
 R['/api/selfupdate/run'] = async q => {
   const base = otaSource();
@@ -1022,4 +1016,4 @@ function otaTick(tag) {
 setTimeout(() => otaTick('boot'), 8000).unref?.();
 setInterval(() => otaTick('scheduled'), 30 * 60 * 1000).unref?.();
 
-server.listen(PORT, '0.0.0.0', () => console.log('Sonora v5 on :' + PORT + (KA ? ' (keepalive on)' : '')));
+server.listen(PORT, '0.0.0.0', () => console.log('Sonora v' + (localVersion() || '?') + ' on :' + PORT + (KA ? ' (keepalive on)' : '')));

@@ -25,6 +25,20 @@ export PATH="$JAVA_HOME/bin:$PATH"
 [ -d "$ANDROID_HOME/platforms" ] || { echo "Android SDK not found at $ANDROID_HOME"; exit 1; }
 echo "sdk.dir=$ANDROID_HOME" > "$AND/local.properties"
 
+# The Android Java sources (MainActivity, the in-app server, Updater) are not
+# in this checkout — the repository only carries the prebuilt apk/Sonora.apk.
+# Fail loudly instead of letting gradle produce a confusing error later.
+[ -f "$AND/app/src/main/AndroidManifest.xml" ] || {
+  echo
+  echo "The Android source project is missing from this checkout."
+  echo "Only the prebuilt apk/Sonora.apk is stored in git (it is current and"
+  echo "installable). To rebuild the APK you need the Java sources restored"
+  echo "under android/app/src/main/ — see HANDOVER.txt PART 10 and the"
+  echo "Android section of CHANGES.md."
+  echo
+  exit 1
+}
+
 # ---- 1. copy the web app -------------------------------------------
 echo "→ copying web files"
 mkdir -p "$WEB"

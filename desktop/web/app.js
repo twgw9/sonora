@@ -7,7 +7,7 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v33-2026-08-24';
+const BUILD = 'v37-2026-08-25';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -58,6 +58,18 @@ const uniqById = a => { if (!Array.isArray(a)) return []; const seen = new Set()
   return a.filter(x => x && typeof x === 'object' && x.id && !seen.has(x.id) && seen.add(x.id)); };
 
 let tT; function toast(m) { $('#toastT').textContent = m; const t = $('#toast'); t.classList.add('show'); clearTimeout(tT); tT = setTimeout(() => t.classList.remove('show'), 2500); }
+/* A toast with a button — used for "Update available", "Resume queue?" and
+   similar. One element, reused, auto-hides. */
+let nT2 = 0;
+function notice(msg, label, fn) {
+  let n = $('#notice');
+  if (!n) { n = el('div', 'notice2'); document.body.appendChild(n); }
+  n.innerHTML = `<span>${esc(msg)}</span>${label ? `<button class="nbtn">${esc(label)}</button>` : ''}`;
+  const b = n.querySelector('button');
+  if (b) b.onclick = () => { n.classList.remove('show'); try { fn && fn(); } catch (e) { } };
+  n.classList.add('show');
+  clearTimeout(nT2); nT2 = setTimeout(() => n.classList.remove('show'), 10000);
+}
 const buzz = n => { try { navigator.vibrate && navigator.vibrate(n || 8); } catch (e) { } };
 
 const MEM = new Map();
@@ -88,11 +100,16 @@ async function api(p, opt = {}) {
     throw new Error('offline');
   }
   if (useCache && !fresh) { const m = memGet(p, 90000); if (m) return m; }
+  /* Room calls can be pointed at a different server (a LAN host on the same
+     Wi-Fi, or any deployment) without a rebuild. Only /api/room* is rewritten;
+     everything else always talks to the origin that served the page. */
+  let target = p;
+  if (S.roomSrv && p.startsWith('/api/room')) target = S.roomSrv.replace(/\/+$/, '') + p;
   let last;
   for (let i = 0; i <= tries; i++) {
     try {
       const c = new AbortController(), to = setTimeout(() => c.abort(), 18000);
-      const r = await fetch(p, { signal: c.signal, headers: { Accept: 'application/json' } });
+      const r = await fetch(target, { signal: c.signal, headers: { Accept: 'application/json' } });
       clearTimeout(to);
       if (r.status === 429) { const ra = +(r.headers.get('Retry-After') || 1); await wait(ra * 1000 + Math.random() * 400); continue; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -134,7 +151,10 @@ const I = {
 /* ========================================================= */
 const S = {
   view: 'home', stack: [], custom: false,
-  queue: [], idx: -1,
+  /* The last queue is kept (capped at 60 tracks) so a restart can resume
+     where you left off. Turn it off in Settings → Playback. */
+  queue: LS('queue', []), idx: LS('qidx', -1),
+  resuming: false,
   liked: uniqById(LS('liked', [])), recent: uniqById(LS('recent', [])), dls: uniqById(LS('dls', [])),
   pls: (LS('pls', []) || []).filter(p => p && typeof p === 'object' && typeof p.name === 'string')
         .map(p => ({ id: p.id || Date.now(), name: p.name, songs: uniqById(p.songs) })),
@@ -157,8 +177,26 @@ const S = {
   // music down the page and mostly showed zeroes on a fresh install.
   wid: LS('wid', false),
   glass: LS('glass', false),
+  /* Glass widget — a frosted now-playing card + glass bar. Off by default:
+     it is prettier than the plain bar but costs blur compositing, so it is
+     an opt-in (Settings → Appearance → Glass widget), never the default. */
+  glw: LS('glw', false),
+  wSty: LS('wSty', 'd'),
+  /* Room server override. Empty string = use this server. Set to a LAN
+     address (e.g. http://192.168.1.5:3000) to run rooms locally without
+     Render, or to a public deployment for internet rooms. */
+  roomSrv: LS('roomSrv', ''),
+  /* search result category tab */
+  sfTab: 'all',
+  /* recently searched terms (capped) */
+  req: LS('req', []),
+  /* resume last queue */
+  resume: LS('resume', true),
 };
 try { if (LS('cmp', false) === true && !LS('cmpMigrated', false)) { SET('cmp', false); SET('cmpMigrated', true); } } catch (e) { }
+/* Resume gate: the saved queue is only honoured when the setting says so. */
+if (!S.resume || !S.queue.length || S.idx < 0 || S.idx >= S.queue.length) { S.queue = []; S.idx = -1; }
+else S.resuming = true;
 const save = () => { SET('liked', S.liked.slice(0, 700)); SET('recent', S.recent.slice(0, 120));
   SET('dls', S.dls.slice(0, 400)); SET('pls', S.pls); SET('stats', S.stats); };
 
@@ -591,8 +629,14 @@ async function play(list, i) {
   const url = surl(s); if (!url) { toast('Track unavailable'); return skip(true); }
   wake(); au.src = url;
   const v = clamp($('#vol').value / 100, 0, 1); setVol(S.fade ? 0 : v);
-  try { await au.play(); errN = 0; } catch (e) { toast('Tap play to allow audio'); }
+  /* One retry: WebViews sometimes reject the very first play() with a
+     NotAllowedError even after a user gesture; a second attempt 250ms later
+     goes through. Without this, "nothing happens" on the first tap. */
+  try { await au.play(); errN = 0; }
+  catch (e) { await wait(250); try { await au.play(); errN = 0; } catch (e2) { toast('Tap play to allow audio'); } }
   if (S.fade) fadeTo(v, 600);
+  /* Remember the queue so a restart can resume where you left off. */
+  try { const q = S.queue.slice(0, 60); SET('queue', q); SET('qidx', S.idx); } catch (e) { }
   applyFX(); paintNow(s);
   S.recent = uniqById([s, ...S.recent.filter(x => x.id !== s.id)]).slice(0, 120);
   S.stats.plays++; S.stats.artists[s.a] = (S.stats.artists[s.a] || 0) + 1;
@@ -868,7 +912,7 @@ function widgetBoard() {
   const cur = S.queue[S.idx];
 
   if (widOn('now')) {
-    const w = el('div', 'wcard wnow');
+    const w = el('div', 'wcard wnow' + (S.wSty === 'g' ? ' glwc' : ''));
     w.innerHTML = `<div class="wh">${I.music}<span>Now playing</span></div>`;
     if (cur) {
       const body = el('div', 'wnowb', `
@@ -1110,7 +1154,10 @@ function ctxMenu(e, s, del) {
   const items = [['p', I.play, 'Play now'], ['n', I.next, 'Play next'], ['q', I.queue, 'Add to queue'],
   ['l', I.heart, isLiked(s.id) ? 'Remove from Liked' : 'Add to Liked'], ['f', I.plus, 'Add to playlist'],
   ['d', I.dl, 'Download'], ['r', I.radio, 'Start radio'], ['a', I.mic, 'More by artist'],
-  ['b', I.disc, 'Open album'], ['s', I.share, 'Share'], ...(S.room ? [['m', I.plus, 'Add to room queue'], ['M', I.radio, 'Play in room now']] : []), ...(del ? [['x', I.trash, 'Remove']] : [])];
+  ['b', I.disc, 'Open album'],
+  ['k', '<svg viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>', 'Karaoke (vocal off)'],
+  ['z', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.4V12l3.2 2.4"/></svg>', 'Sleep after this'],
+  ['s', I.share, 'Share'], ...(S.room ? [['m', I.plus, 'Add to room queue'], ['M', I.radio, 'Play in room now']] : []), ...(del ? [['x', I.trash, 'Remove']] : [])];
   c.innerHTML = items.map(([k, ic, t]) => `<button data-k="${k}">${ic}${t}</button>`).join('');
   c.classList.add('open');
   const h = c.offsetHeight || 380;
@@ -1126,6 +1173,8 @@ function ctxMenu(e, s, del) {
     if (k === 'r') startRadio(s);
     if (k === 'a') openArtist({ t: s.a.split(',')[0].trim() });
     if (k === 'b') s.alId ? openColl({ id: s.alId, t: s.al, k: 'album' }) : toast('No album linked');
+    if (k === 'k') { S.kar = !S.kar; applyFX(); toast('Vocal reducer ' + (S.kar ? 'on' : 'off')); }
+    if (k === 'z') { clearInterval(S.tmr); S.tmr = null; S.tmrEnd = -1; toast('Stopping after this track'); }
     if (k === 's') { const tx = `${s.t} — ${s.a}`;
       navigator.share ? navigator.share({ title: tx, text: 'Listening on Sonora' }).catch(() => { }) : (navigator.clipboard?.writeText(tx), toast('Copied')); }
     if (k === 'm') roomAdd(s);
@@ -1198,7 +1247,22 @@ function render() {
     queue: () => vQueue(v),
     recent: () => vLib(v, S.recent, 'Listening History', 'No history yet', 'Recently played tracks appear here'),
     dls: () => vLib(v, S.dls, 'Downloads', 'No downloads yet', 'Use the download icon on any track') };
-  (F[S.view] || vHome)(v);
+  /* One thrown exception inside one view used to blank the whole page.
+     Each view is now isolated: a failure shows a retry card instead of
+     losing the app, and the error is logged for the next report. */
+  try {
+    (F[S.view] || vHome)(v);
+  } catch (e) {
+    console.error('[view]', S.view, e);
+    v.innerHTML = '';
+    const bx = emptyBox(I.music, 'This view hit a snag',
+      esc(S.view) + ' could not be drawn. Everything else is fine.');
+    const b = el('button', 'sbtn pri', 'Try again');
+    b.onclick = () => render();
+    b.style.marginTop = '10px';
+    bx.appendChild(b);
+    v.appendChild(bx);
+  }
   v.appendChild(liveStrip());
 }
 function vQueue(v) {
@@ -1467,7 +1531,15 @@ let sT;
 async function vSearch(v) {
   const q = $('#q').value.trim();
   v.appendChild(H('Search', q ? 'Results for \u201c' + q + '\u201d' : 'Find anything in seconds'));
-  if (!q) { v.appendChild(emptyBox('<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.8"/><path d="M20 20l-4-4"/></svg>',
+  if (!q) {
+    if (S.req.length) {
+      v.appendChild(H('Recent searches', 'Tap to look again'));
+      const rc = el('div', 'chips');
+      S.req.forEach(x => { const c = el('button', 'chip', x);
+        c.onclick = () => { $('#q').value = x; doSearch(); }; rc.appendChild(c); });
+      v.appendChild(rc);
+    }
+    v.appendChild(emptyBox('<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.8"/><path d="M20 20l-4-4"/></svg>',
       'What do you want to hear?', 'Search songs, artists, albums or playlists'));
     v.appendChild(H('Popular right now', 'Trending searches'));
     const c = el('div', 'chips');
@@ -1475,15 +1547,34 @@ async function vSearch(v) {
       const b = el('button', 'chip', x); b.onclick = () => { $('#q').value = x; doSearch(); }; c.appendChild(b); });
     v.appendChild(c); return; }
   const b = el('div'); b.appendChild(skel(8)); v.appendChild(b);
-  try { const d = await api('/api/searchall?q=' + encodeURIComponent(q)); b.innerHTML = '';
-    if (d.artists?.length) { b.appendChild(H('Artists', 'Matching performers')); b.appendChild(railWrap(cGrid(d.artists, true))); }
-    if (d.songs?.length) { b.appendChild(H('Songs', d.songs.length + ' matches')); b.appendChild(playBar(d.songs)); b.appendChild(gap(10)); b.appendChild(rowList(d.songs)); }
-    if (d.albums?.length) { b.appendChild(H('Albums', 'Full records')); b.appendChild(railWrap(cGrid(d.albums, true))); }
-    if (d.playlists?.length) { b.appendChild(H('Playlists', 'Ready-made collections')); b.appendChild(railWrap(cGrid(d.playlists, true))); }
-    if (!d.songs?.length && !d.albums?.length) b.appendChild(emptyBox(I.music, 'No results', 'Try a different spelling'));
+  try {
+    const d = await api('/api/searchall?q=' + encodeURIComponent(q)); b.innerHTML = '';
+    if (d.artists?.length || d.songs?.length || d.albums?.length || d.playlists?.length) {
+      /* Category tabs — everything the server returns is already here, the
+         tabs just decide what is on screen. "All" is the default so nothing
+         is hidden. */
+      const tabs = [['all', 'All'], ['songs', 'Songs'], ['albums', 'Albums'], ['artists', 'Artists'], ['pls', 'Playlists']];
+      const tb = el('div', 'chips sftabs');
+      tabs.forEach(([k, n]) => {
+        const c = el('button', 'chip' + (S.sfTab === k ? ' on' : ''), n);
+        c.onclick = () => { S.sfTab = k; render(); };
+        tb.appendChild(c);
+      });
+      b.appendChild(tb); b.appendChild(gap(8));
+      const show = k => S.sfTab === 'all' || S.sfTab === k;
+      if (show('songs') && d.songs?.length) { b.appendChild(H('Songs', d.songs.length + ' matches')); b.appendChild(playBar(d.songs)); b.appendChild(gap(10)); b.appendChild(rowList(d.songs)); }
+      if (show('albums') && d.albums?.length) { b.appendChild(H('Albums', 'Full records')); b.appendChild(railWrap(cGrid(d.albums, true))); }
+      if (show('artists') && d.artists?.length) { b.appendChild(H('Artists', 'Matching performers')); b.appendChild(railWrap(cGrid(d.artists, true))); }
+      if (show('pls') && d.playlists?.length) { b.appendChild(H('Playlists', 'Ready-made collections')); b.appendChild(railWrap(cGrid(d.playlists, true))); }
+    } else b.appendChild(emptyBox(I.music, 'No results', 'Try a different spelling'));
   } catch (e) { b.innerHTML = ''; b.appendChild(errBox(() => render())); }
 }
-const doSearch = () => { $('#sug').classList.remove('open'); S.custom = false; if (S.view !== 'search') nav('search'); else render(); };
+const doSearch = () => { $('#sug').classList.remove('open'); S.custom = false;
+  /* remember the query so an empty search box offers it back */
+  const q = $('#q').value.trim();
+  if (q) { S.req = [q, ...S.req.filter(x => x !== q)].slice(0, 6); SET('req', S.req); }
+  S.sfTab = 'all';                         // every new search starts on All
+  if (S.view !== 'search') nav('search'); else render(); };
 function vMood(v) {
   v.appendChild(el('div', 'hero', `<h1>Moods &amp; <em>genres</em></h1><p>Pick a feeling and we'll assemble the mix instantly.</p>`));
   v.appendChild(H('Browse', MOODS.length + ' collections, one tap each'));
@@ -1530,6 +1621,19 @@ function vStudio(v) {
   Object.keys(EQP).slice(0, 5).forEach(k => { const x = el('button', 'chip' + (S.eqPre === k ? ' on' : ''), k[0].toUpperCase() + k.slice(1));
     x.onclick = () => { setEQPreset(k); render(); }; b.appendChild(x); });
   v.appendChild(b);
+  if (S.pls.length) {
+    v.appendChild(H('My playlists', S.pls.length + (S.pls.length === 1 ? ' playlist' : ' playlists') + ' — manage them from Library'));
+    const pc = el('div', 'chips');
+    S.pls.slice(0, 8).forEach(p => {
+      const c = el('button', 'chip', p.name + ' · ' + p.songs.length);
+      c.onclick = () => detail(p.name, p.songs.length + ' tracks', async () => p.songs);
+      pc.appendChild(c);
+    });
+    const mg = el('button', 'chip', 'Manage');
+    mg.onclick = () => nav('pls');
+    pc.appendChild(mg);
+    v.appendChild(pc);
+  }
   [['Lo-fi picks', 'lofi chill beats'], ['Slowed and reverb', 'slowed reverb'], ['Built for 8D', '8d audio songs']].forEach(([t, qq]) => {
     v.appendChild(H(t)); const d = el('div'); d.appendChild(skel(6)); v.appendChild(d);
     api('/api/mood?q=' + encodeURIComponent(qq)).then(r => { d.innerHTML = ''; d.appendChild(sGrid(r.songs || [], true)); }).catch(() => d.innerHTML = '');
@@ -1603,7 +1707,7 @@ function vPrefs(v) {
       w.appendChild(b); }); return w; };
 
   let g = group('Appearance', 'Make it yours');
-  row(g, 'Theme and accent', 'Six themes, six accent colours', btn('Open panel', () => openPan('#thPan'), 1));
+  row(g, 'Theme and accent', 'Eight themes, six accent colours', btn('Open panel', () => openPan('#thPan'), 1));
   row(g, 'Layout density', 'How much fits on screen', seg([['compact', 'Compact'], ['default', 'Default'], ['cozy', 'Cozy'], ['list', 'List']], S.dens, setDens));
   row(g, 'Corner style', 'Sharp, default or rounded', seg([['sharp', 'Sharp'], ['default', 'Default'], ['round', 'Round']], S.corner, setCorner));
   row(g, 'Typeface', 'Reading style across the app', seg([['grotesk', 'Sans'], ['serif', 'Serif'], ['mono', 'Mono'], ['round', 'Round']], S.font, setFont));
@@ -1612,10 +1716,14 @@ function vPrefs(v) {
   row(g, 'Animated artwork', 'Spinning disc in full screen', toggle(S.spin, on => { S.spin = on; SET('spin', on); }));
   row(g, 'Glass surfaces', 'Frosted translucent panels over the theme',
     toggle(S.glass, on => setGlass(on)));
+  row(g, 'Glass widget', 'Frosted now-playing bar, mini player and card — comes on instead of the plain bar',
+    toggle(S.glw, on => setGlassW(on)));
 
   g = group('Home widgets', 'Cards at the top of the home page. Off by default so the music comes first');
   row(g, 'Show widgets', S.wid ? 'Pick which ones below' : 'Home starts with the music',
     toggle(S.wid, on => { S.wid = on; SET('wid', on); render(); }));
+  row(g, 'Widget style', 'Now-playing card look', seg([['d', 'Default'], ['g', 'Glass']], S.wSty,
+    v => { S.wSty = v; SET('wSty', v); render(); }));
   if (S.wid) WIDGETS.forEach(([k, n, d]) =>
     row(g, n, d, toggle(widOn(k), () => widToggle(k))));
   row(g, 'Phone home screen', 'Shortcuts straight to trending, liked, search and rooms',
@@ -1635,20 +1743,12 @@ function vPrefs(v) {
   qsel.onchange = () => { S.quick = qsel.value; SET('quick', S.quick); paintQuick(); toast('Quick button set to ' + MODES[S.quick].n); };
   row(g, 'Quick button mode', 'What the player-bar toggle switches on', qsel);
   row(g, 'Sleep timer', 'Fade out and stop automatically', btn('Set timer', () => openPan('#tmPan')));
+  row(g, 'Resume last queue', 'Offer the last queue when the app reopens',
+    toggle(S.resume, on => { S.resume = on; SET('resume', on); }));
 
   g = group('Rooms', 'Listening together');
-  if (window.Android && window.Android.isNative) {
-    const rhIn = el('input', 'sinp');
-    rhIn.placeholder = 'https://sonora-xxxx.onrender.com';
-    api('/api/roomhost', { cache: false, tries: 0 }).then(d => { rhIn.value = d.host || ''; }).catch(() => { });
-    rhIn.onchange = async () => {
-      const u = rhIn.value.trim().replace(/\/+$/, '');
-      try { await api('/api/roomhost?url=' + encodeURIComponent(u), { cache: false, tries: 0 });
-        S._roomHostOK = !!u; S._roomHostNeeded = !u; toast(u ? 'Room server saved' : 'Room server cleared');
-      } catch (e) { toast('Could not save'); }
-    };
-    row(g, 'Room server', 'Your hosted Sonora, for listening together', rhIn);
-  }
+  row(g, 'Room server', S.roomSrv ? 'Internet/LAN: ' + shortHost(S.roomSrv) : 'Local: this device is the server',
+    btn('Change', () => { S.view === 'room' ? render() : nav('room'); }, 1));
   const nameIn = el('input', 'sinp'); nameIn.value = S.me; nameIn.maxLength = 18;
   nameIn.oninput = () => { S.me = nameIn.value.trim() || 'Guest'; SET('me', S.me); };
   row(g, 'Display name', 'How others see you in a room', nameIn);
@@ -1717,14 +1817,12 @@ function vPrefs(v) {
     rowStat.appendChild(chk); g.appendChild(rowStat);
     api('/api/update/status', { cache: false, tries: 0 }).then(refreshRow).catch(() => refreshRow(null));
 
-    const srcIn = el('input', 'sinp'); srcIn.placeholder = 'https://raw.githubusercontent.com/user/repo/main/';
-    srcIn.style.width = '100%';
+    /* The update source is baked in and deliberately not editable — see
+       PART 5 bug 36. A field that repoints the app at any URL is a way to
+       hand someone a link that turns their copy into something else. */
+    const srcIn = el('input', 'sinp'); srcIn.readOnly = true; srcIn.style.width = '100%';
     api('/api/update/status', { cache: false, tries: 0 }).then(i => { srcIn.value = (i && i.source) || ''; }).catch(() => { });
-    srcIn.onchange = async () => {
-      try { await api('/api/update/source?url=' + encodeURIComponent(srcIn.value.trim()), { cache: false, tries: 0 });
-        toast('Update source saved'); } catch (e) { toast('Could not save'); }
-    };
-    row(g, 'Update source', 'Raw URL of the folder holding version.json', srcIn);
+    row(g, 'Update source', 'Baked in — this copy always updates from the official source', srcIn);
     row(g, 'Force reinstall files', 'Download the latest even if the version matches', btn('Force', async () => {
       toast('Downloading…');
       try { const d = await api('/api/update/check?force=1', { cache: false, tries: 0 });
@@ -1836,6 +1934,47 @@ async function vGet(v) {
     <svg viewBox="0 0 24 24"><path d="M12 3.5v10.8"/><path d="M8 10.6 12 14.6l4-4"/><path d="M4.5 19h15"/></svg> Free · no account</span>
     <h1>Take Sonora <em>everywhere</em></h1>
     <p>The same seven-band equaliser, the same sixteen sound modes, the same library — on your phone and on your computer. Nothing to sign up for.</p>`));
+
+  /* Updates and community — the one place for "what's new" without hunting
+     in Settings. The update source is baked in and never user-editable. */
+  {
+    const com = el('div', 'setgrid');
+    const st = el('div', 'setrow');
+    st.innerHTML = '<div class="si2"><b>Checking…</b><span>Update status</span></div>';
+    const chk = el('button', 'sbtn pri', 'Check now');
+    st.appendChild(chk); com.appendChild(st);
+    const paint = i => {
+      const v = i && i.version;
+      st.querySelector('b').textContent = v ? 'Interface v' + v + ' — up to date' : 'Interface: as shipped';
+      const ss = String((i && i.source) || '').replace('https://raw.githubusercontent.com/', 'github.com/').replace(/\/$/, '');
+      st.querySelector('span').textContent = i && i.source
+        ? 'Updates automatically from ' + ss + (i.lastAt ? ' · last checked ' + new Date(i.lastAt).toLocaleString() : '')
+        : (i && i.lastMsg ? 'Last: ' + i.lastMsg : 'No source configured');
+    };
+    api('/api/selfupdate/status', { cache: false, tries: 0 }).then(paint).catch(() => paint(null));
+    chk.onclick = async () => {
+      chk.textContent = 'Checking…'; chk.disabled = true;
+      try {
+        const d = await api('/api/selfupdate/run', { cache: false, tries: 0 });
+        toast(d.msg || d.result || 'Done');
+        if (d.reload) setTimeout(() => location.reload(), 1200);
+      } catch (e) { toast('Could not reach the update source'); }
+      chk.textContent = 'Check now'; chk.disabled = false;
+      try { paint(await api('/api/selfupdate/status', { cache: false, tries: 0 })); } catch (e) { }
+    };
+    v.appendChild(com);
+    v.appendChild(H('Community', 'Release notes, early builds, support'));
+    const soc = el('div', 'setgrid');
+    const tg = el('div', 'setrow tgrow');
+    tg.innerHTML = '<div class="si2"><b>Sonora on Telegram</b><span>Announcements, new builds and help</span></div>';
+    const tgb = el('a', 'sbtn pri', 'Join channel'); tgb.href = TELEGRAM; tgb.target = '_blank'; tgb.rel = 'noopener noreferrer';
+    tg.appendChild(tgb); soc.appendChild(tg);
+    const gh = el('div', 'setrow tgrow');
+    gh.innerHTML = '<div class="si2"><b>Source on GitHub</b><span>Report an issue, read the change log</span></div>';
+    const ghb = el('a', 'sbtn pri', 'View repo'); ghb.href = REPO; ghb.target = '_blank'; ghb.rel = 'noopener noreferrer';
+    gh.appendChild(ghb); soc.appendChild(gh);
+    v.appendChild(soc);
+  }
 
   const dlHead = H('Downloads', 'Pick your platform');
   v.appendChild(dlHead);
@@ -2110,7 +2249,61 @@ async function openEra(y, n, flavour) {
   v.appendChild(liveStrip());
 }
 const openArtist = a => detail(a.t, 'Top tracks by this artist', async () => (await api('/api/search?q=' + encodeURIComponent(a.t) + '&n=45')).songs);
-const openColl = x => detail(x.t, x.k === 'artist' ? 'Artist' : x.k === 'playlist' ? 'Playlist' : 'Album', async () => (await api((/playlist|mix|radio/.test(x.k) ? '/api/playlist?id=' : '/api/album?id=') + x.id)).songs);
+/* Collection page — albums, playlists, radio.
+   One hero (kicker, big title, stats, Play / Shuffle pills) over a clean
+   track list. The playlist APIs return {info, songs} in a single call, so
+   there is exactly one network round-trip and nothing to re-fill. */
+async function collPage(x) {
+  if (!x || !x.id) return toast('Nothing linked here');
+  const isPl = /playlist|mix|radio/.test(x.k || '');
+  const label = x.k === 'artist' ? 'Artist' : isPl ? 'Playlist' : 'Album';
+  S.custom = true; const v = $('#view'); v.innerHTML = ''; $('#main').scrollTop = 0;
+  const box = el('div'); box.appendChild(skel(6)); v.appendChild(box); v.appendChild(liveStrip());
+  try {
+    const d = await api((isPl ? '/api/playlist?id=' : '/api/album?id=') + x.id);
+    const songs = (d.songs || []).filter(Boolean);
+    const info = d.info && d.info.t ? d.info : x;
+    v.innerHTML = '';
+    if (!songs.length) {
+      /* Radio stations are not playlists — they only resolve by name. */
+      if (/radio|mix/.test(x.k || '')) {
+        return detail(x.t || 'Radio', 'Radio mix', async () =>
+          (await api('/api/mood?q=' + encodeURIComponent(x.t || 'radio hits'))).songs);
+      }
+      v.appendChild(H(info.t || x.t, label));
+      return v.appendChild(emptyBox(I.music, 'Nothing found', 'Try again shortly'));
+    }
+    const mins = Math.round(songs.reduce((a, s) => a + (+s.d || 0), 0) / 60);
+    const sub = [info.s && info.s !== 'Just Updated' ? info.s : '', songs.length + ' songs', mins ? mins + ' min' : '', info.y || ''].filter(Boolean).join(' · ');
+    const hero = el('div', 'chero');
+    hero.innerHTML = `<div class="chart"><img src="${imgAt(info.img || x.img, 500)}" alt="" loading="lazy" onerror="this.style.opacity=0"></div>
+      <div class="cmeta">
+        <div class="ckick">${label}</div>
+        <h1>${esc(info.t || x.t)}</h1>
+        ${sub ? `<div class="csub">${esc(sub)}</div>` : ''}
+        <div class="cbtns">
+          <button class="cplay" id="cPlay">${I.play}<span>Play</span></button>
+          <button class="cshuf" id="cShuf"><svg viewBox="0 0 24 24"><path d="M3 6.5h3.1c1.4 0 2.7.7 3.5 1.8l4.8 7.4c.8 1.1 2.1 1.8 3.5 1.8H21"/><path d="M17.3 4.6 20.8 7.5l-3.5 2.9"/><path d="M17.3 13.6l3.5 2.9-3.5 2.9"/><path d="M3 17.5h3.1c1.4 0 2.7-.7 3.5-1.8l1.1-1.7"/><path d="M13.3 10l1.1-1.7c.8-1.1 2.1-1.8 3.5-1.8H21"/></svg><span>Shuffle</span></button>
+          <button class="cico" id="cRadio" title="Start radio" aria-label="Start radio">${I.radio}</button>
+          <button class="cico" id="cQueue" title="Queue all" aria-label="Queue all">${I.queue}</button>
+        </div>
+      </div>`;
+    v.appendChild(hero);
+    v.appendChild(H('Tracks', songs.length + (songs.length === 1 ? ' track' : ' tracks') + ' in this ' + label.toLowerCase()));
+    v.appendChild(rowList(songs));
+    $('#cPlay').onclick = () => play(songs, 0);
+    $('#cShuf').onclick = () => { S.shuffle = true; play([...songs].sort(() => Math.random() - .5), 0); const sh = $('#shuf'); if (sh) sh.classList.add('on'); };
+    $('#cRadio').onclick = () => startRadio(songs[0]);
+    $('#cQueue').onclick = () => { S.queue = songs; S.idx = -1; counts(); toast(label + ' queued'); };
+  } catch (e) {
+    v.innerHTML = '';
+    v.appendChild(H(x.t || '', label));
+    v.appendChild(errBox(() => collPage(x)));
+  }
+  v.appendChild(liveStrip());
+}
+/* keep the old name working everywhere it is used */
+const openColl = x => collPage(x);
 
 /* ================= ROOMS ================= */
 const avat = n => (String(n || '?').trim()[0] || '?').toUpperCase();
@@ -2119,7 +2312,8 @@ function rAct(a, v, optimistic) {
   if (optimistic && S.snap) { try { optimistic(S.snap); paintRoom(S.snap); } catch (e) { } }
   const u = `/api/room/act?c=${S.room}&a=${a}&u=${encodeURIComponent(S.me)}&uid=${MYID}` +
     (v !== undefined ? '&v=' + encodeURIComponent(v) : '');
-  return fetch(u).then(r => r.json())
+  const t = S.roomSrv ? S.roomSrv.replace(/\/+$/, '') + u : u;
+  return fetch(t).then(r => r.json())
     .then(d => { if (d && d.code) { S.snap = d; paintRoom(d); } return d; })
     .catch(() => { toast('Could not reach the room'); return null; });
 }
@@ -2129,7 +2323,10 @@ const roomOpen = () => !!(S.snap && S.snap.open);
 
 function newCode() { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let c = '';
   for (let i = 0; i < 5; i++) c += A[Math.floor(Math.random() * A.length)]; return c; }
-const inviteURL = c => location.origin + '/?room=' + (c || S.room);
+const inviteURL = c => {
+  const o = S.roomSrv ? S.roomSrv.replace(/\/+$/, '') : location.origin;
+  return o + '/?room=' + (c || S.room);
+};
 
 let roomPoll = 0, roomLive = false;
 function setRoomLive(v) {
@@ -2163,7 +2360,8 @@ function joinRoom(code, host) {
   S.es = null;
   try {
     if (typeof EventSource === 'function') {
-      S.es = new EventSource('/api/room/sub?c=' + code);
+      const base = S.roomSrv ? S.roomSrv.replace(/\/+$/, '') : '';
+      S.es = new EventSource(base + '/api/room/sub?c=' + code);
       S.es.addEventListener('state', e => { try { const d = JSON.parse(e.data);
         if (d && d.now) noteLag(S._pullAt || Date.now() - 200, d.now);
         S.snap = d; paintRoom(d); follow(d); setRoomLive(true); } catch (err) { } });
@@ -2332,31 +2530,52 @@ function roomAdd(song) {
 
 /* ---- the Rooms page ---- */
 async function needsRoomHost() {
-  if (!(window.Android && window.Android.isNative)) return false;
-  try { const d = await api('/api/roomhost', { cache: false, tries: 0 }); return !d.host; }
-  catch (e) { return true; }
+  /* Rooms now run without any setup: the device's own server is the default
+     (local mode), or a picked address (server mode). No external /api/roomhost
+     round-trip, so rooms work in the APK, offline, on a plane — anywhere. */
+  return false;
 }
 function roomHostSetup(v) {
   v.appendChild(el('div', 'hero', `<h1>Listen <em>together</em></h1>
-    <p>Rooms need a shared address so two phones can meet. Point the app at your own Sonora deployment once — after that everything works exactly like the website.</p>`));
-  v.appendChild(H('Connect a room server', 'One time, on this device'));
-  const w = el('div'); w.style.maxWidth = '470px';
-  w.innerHTML = `<input class="inp" id="rhIn" placeholder="https://sonora-xxxx.onrender.com" autocomplete="off">
-    <button class="wb pri" id="rhGo">Connect</button>
-    <div class="sb2" style="margin-top:12px">Deploy the project to Render (it is free) and paste the address it gives you. See DEPLOY.md in the project.</div>`;
+    <p>Rooms need a shared address so two phones can meet. Two ways to do it:
+    a <b>local</b> room hosted on this device itself (no internet, private),
+    or a <b>server</b> room on any Sonora deployment (or the PC on your Wi-Fi
+    running <code>node server.js</code>) so friends anywhere can join.</p>`));
+  v.appendChild(H('Where should this room live?', 'Pick one — can be changed any time'));
+  const w = el('div'); w.style.maxWidth = '500px';
+  w.innerHTML = `
+    <div class="sbtn lsr" id="rhLocal" style="width:100%;margin-bottom:9px;justify-content:flex-start;gap:9px">
+      ${I.mic}<div class="si2"><b>Local — on this device</b><span>Everyone in the room swaps codes in person. Nothing leaves this phone. No internet needed.</span></div>
+    </div>
+    <div class="sbtn lsr" id="rhSrv" style="width:100%;margin-bottom:14px;justify-content:flex-start;gap:9px">
+      ${I.users}<div class="si2"><b>Server — shared over the internet</b><span>Any Sonora deployment — your own Render URL, or your PC's address on this Wi-Fi network.</span></div>
+    </div>
+    <div id="rhBox"></div>`;
   v.appendChild(w);
-  $('#rhGo').onclick = async () => {
-    let u = $('#rhIn').value.trim();
-    if (!/^https?:\/\//.test(u)) { toast('Start the address with https://'); return; }
-    u = u.replace(/\/+$/, '');
-    try {
-      await api('/api/roomhost?url=' + encodeURIComponent(u), { cache: false, tries: 0 });
-      toast('Connected — rooms are ready');
+  const box = $('#rhBox');
+  const showForm = () => {
+    box.innerHTML = `<div class="sb2" style="margin:2px 0 8px">Address of the Sonora server that rooms should run on. Blank = this device (local).</div>
+      <input class="inp" id="rhIn" placeholder="https://sonora-xxxx.onrender.com  or  http://192.168.1.5:3000" autocomplete="off" value="${esc(S.roomSrv || '')}">
+      <button class="wb pri" id="rhGo">Save &amp; use</button>`;
+    $('#rhGo').onclick = () => {
+      let u = $('#rhIn').value.trim().replace(/\/+$/, '');
+      if (u && !/^https?:\/\//.test(u)) { toast('Start the address with http:// or https://'); return; }
+      S.roomSrv = u; SET('roomSrv', u);
+      S._roomHostOK = true; S._roomHostNeeded = false;
+      toast(u ? 'Rooms will use ' + shortHost(u) : 'Rooms will run on this device');
       render();
-    } catch (e) { toast('Could not save that address'); }
+    };
   };
+  $('#rhLocal').onclick = () => {
+    S.roomSrv = ''; SET('roomSrv', '');
+    S._roomHostOK = true; S._roomHostNeeded = false;
+    toast('Local rooms — this device is the server'); render();
+  };
+  $('#rhSrv').onclick = showForm;
   v.appendChild(liveStrip());
 }
+/* Short display of a room-server address without the protocol noise. */
+const shortHost = u => String(u || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
 
 function vRoom(v) {
   if (window.Android && window.Android.isNative && !S._roomHostOK) {
@@ -2377,6 +2596,29 @@ function vRoom(v) {
         style="text-transform:uppercase;letter-spacing:6px;font-weight:800;text-align:center;font-size:19px">
       <button class="wb" id="rJ">Join room</button>`;
     v.appendChild(w);
+    const rs = el('div', 'chips'); rs.style.marginTop = '14px';
+    const rlb = el('button', 'chip' + (S.roomSrv ? '' : ' on'), S.roomSrv ? 'Room server: ' + shortHost(S.roomSrv) : 'Room server: this device (local)');
+    rlb.onclick = () => {
+      modal(`<h3>Where do rooms live?</h3>
+        <div class="sb2">Local = this device is the room server (no internet, codes shared in person). Server = any Sonora deployment, or the PC on your Wi-Fi running node server.js.</div>
+        <button class="wb pri" id="rsLocal" style="margin-top:10px">Use this device (local)</button>
+        <button class="wb" id="rsSrv" style="margin-top:8px">Use another server…</button>`, () => {
+        $('#rsLocal').onclick = () => { S.roomSrv = ''; SET('roomSrv', ''); closeM(); toast('Local rooms — this device is the server'); render(); };
+        const box = $('#rsSrv').parentElement;
+        $('#rsSrv').onclick = () => {
+          box.insertAdjacentHTML('beforeend', `<div class="sb2" style="margin-top:10px">Address of a Sonora server (your Render URL, or a PC on the same Wi-Fi).</div>
+            <input class="inp" id="rsIn" placeholder="https://sonora-xxxx.onrender.com" value="${esc(S.roomSrv || '')}" style="margin-top:8px">
+            <button class="wb pri" id="rsGo" style="margin-top:8px">Save</button>`);
+          $('#rsGo').onclick = () => {
+            let u = $('#rsIn').value.trim().replace(/\/+$/, '');
+            if (u && !/^https?:\/\//.test(u)) { toast('Start with http:// or https://'); return; }
+            S.roomSrv = u; SET('roomSrv', u); closeM(); toast(u ? 'Rooms will use ' + shortHost(u) : 'Rooms will run on this device'); render();
+          };
+        };
+      });
+    };
+    rs.appendChild(rlb);
+    v.appendChild(rs);
     $('#rC').onclick = () => joinRoom(newCode(), true);
     const go = () => { const c = $('#rCode').value.trim().toUpperCase();
       if (c.length < 3) return toast('Enter the 5-character code'); askJoin(c); };
@@ -2700,7 +2942,7 @@ function fsRender() {
     const p = el('div', 'pane sc');
     p.innerHTML = `<div id="lyrHead"></div><div class="lyrwrap" id="lyrBox"><div class="lyr">Loading lyrics…</div></div>`;
     body.appendChild(p);
-    LY.lines = null; LY.el = null; LY.idx = -1;
+    LY.lines = null; LY.el = null; LY.idx = -1; LY.wel = null; LY.widx = -1;
     if (!s) { $('#lyrBox').innerHTML = '<div class="lyr">Nothing playing.</div>'; }
     else {
       /* Send the title, artist and duration as well as the id. JioSaavn only
@@ -2718,12 +2960,18 @@ function fsRender() {
         const now = S.queue[S.idx];
         if (!now || now.id !== want) return;
         if (d.timed && d.timed.length) {
-          LY.lines = d.timed;
-          box.innerHTML = d.timed.map((l, i) => `<span class="lyrline" data-l="${i}">${esc(l.x || '\u2022')}</span>`).join('');
+          LY.lines = buildTimed(d.timed);
+          box.innerHTML = LY.lines.map((l, i) => `<span class="lyrline" data-l="${i}">${
+            l.ws.length ? l.ws.map(w => `<span class="w">${esc(w.w)}</span>`).join(' ') : esc(l.x || '\u2022')
+          }</span>`).join('');
           LY.el = [...box.querySelectorAll('.lyrline')];
+          /* per-line word nodes, mapped by line index */
+          LY.wel = LY.lines.map((l, li) => l.ws.length ? [...box.querySelectorAll(`.lyrline[data-l="${li}"] .w`)] : null);
+          LY.widx = -1;
           const h = $('#lyrHead'); if (h) h.innerHTML = '<span class="lyrbadge">Synced</span>';
           tickLyrics(true);
         } else if (d.lyrics) {
+          LY.wel = null;
           box.innerHTML = `<div class="lyr">${esc(d.lyrics)}</div>`;
           const h = $('#lyrHead'); if (h) h.innerHTML = '';
         } else {
@@ -2868,20 +3116,56 @@ function liveStrip() {
 }
 
 /* ---- synced lyrics ticker ---- */
-const LY = { lines: null, el: null, idx: -1 };
+const LY = { lines: null, el: null, idx: -1, wel: null, widx: -1 };
+/* Word-level karaoke timing.
+   Lyrics providers only give line timestamps, so each line's words are
+   placed inside the line's span proportionally to their length — a word
+   twice as long gets twice the time. The result reads as true karaoke:
+   the exact word being sung is lit, the ones already sung stay tinted. */
+function buildTimed(timed) {
+  return timed.map((l, i) => {
+    const end = i + 1 < timed.length ? timed[i + 1].t : l.t + 6;
+    const dur = Math.max(1.4, end - l.t);
+    const txt = String(l.x || '').trim();
+    const parts = txt.split(/\s+/).filter(Boolean);
+    const len = parts.reduce((a, p) => a + p.length, 0) || 1;
+    let acc = 0; const ws = [];
+    for (const p of parts) { ws.push({ w: p, t: l.t + (acc / len) * dur }); acc += p.length + 1; }
+    return Object.assign({}, l, { ws });
+  });
+}
 function tickLyrics(force) {
   if (!LY.lines || !LY.el || !$('#fs').classList.contains('open') || S.fsTab !== 'lyrics') return;
   const t = au.currentTime;
   let i = -1;
   for (let k = 0; k < LY.lines.length; k++) { if (LY.lines[k].t <= t + .15) i = k; else break; }
-  if (i === LY.idx && !force) return;
-  LY.idx = i;
-  LY.el.forEach((n, k) => { n.classList.toggle('cur', k === i);
-    n.classList.toggle('past', k < i); n.classList.toggle('next2', k === i + 1); });
+  /* which word inside the current line is being sung right now */
+  let wi = -1;
+  const line = LY.lines[i];
+  if (line && line.ws) { for (let k = 0; k < line.ws.length; k++) { if (line.ws[k].t <= t + .02) wi = k; else break; } }
+  if (i === LY.idx && wi === LY.widx && !force) return;
+  if (i !== LY.idx || force) {
+    if (LY.idx >= 0 && LY.wel && LY.wel[LY.idx]) LY.wel[LY.idx].forEach(n2 => n2.classList.remove('won', 'sung'));
+    LY.idx = i;
+    LY.el.forEach((n, k) => { n.classList.toggle('cur', k === i);
+      n.classList.toggle('past', k < i); n.classList.toggle('next2', k === i + 1); });
+  }
+  if (wi !== LY.widx && LY.wel) {
+    const arr = LY.wel[i];
+    if (arr) {
+      if (LY.widx >= 0 && arr[LY.widx]) arr[LY.widx].classList.remove('won');
+      for (let j = 0; j < wi && j < arr.length; j++) arr[j].classList.add('sung');
+      if (wi >= 0 && arr[wi]) arr[wi].classList.add('won');
+    }
+    LY.widx = wi;
+  }
   const cur = LY.el[i];
   if (cur) { const box = $('#lyrBox');
     if (box) box.scrollTo({ top: cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2, behavior: 'smooth' }); }
 }
+/* Word-level updates are smoother than the 4x/s media tick, so run a light
+   125ms loop — it is a no-op unless the lyrics tab is open and playing. */
+setInterval(() => { if (!au.paused) tickLyrics(); }, 125);
 
 /* ================= COMMAND PALETTE ================= */
 let cmdOpen = false, cmdSel = 0, cmdItems = [], cmdT = 0;
@@ -3006,6 +3290,14 @@ function setGlass(on) {
   S.glass = !!on; SET('glass', S.glass);
   document.body.classList.toggle('glass', S.glass);
   paintAppearance();
+}
+/* The glass WIDGET: frosted now-playing chrome — the floating mini player on
+   phones, the bottom player on desktop and the home now-playing card. Kept
+   separate from the glass surface style so anyone can have one without the
+   other. Off by default: blur costs GPU compositing on low-end phones. */
+function setGlassW(on) {
+  S.glw = !!on; SET('glw', S.glw);
+  document.body.classList.toggle('glw', S.glw);
 }
 const ACCENTS = [['default','',''],['lime','#d4ff3f','#7ef29d'],['ice','#5ad1ff','#a78bfa'],
 ['rose','#ff6b9d','#ffa07a'],['gold','#ffc93c','#ff8a3d'],['mint','#3ddc97','#7ef29d']];
@@ -3176,23 +3468,56 @@ au.ontimeupdate = () => {
   const c = fmt(au.currentTime), d = fmt(au.duration);
   setT('tc', c); setT('td', d); setT('tc2', c); setT('td2', d);
   const n = Date.now(); if (n - lastTick > 5000 && !au.paused) { S.stats.secs += 5; lastTick = n; save(); }
+  /* Keep the lock-screen / notification scrubber honest in real time. The
+     call is guarded internally and is a no-op where Media Session is absent
+     (jsdom, some WebViews), so it costs nothing there. */
+  if (!au.paused) mediaPos();
 };
 au.onprogress = () => { try { if (au.buffered.length && au.duration) $('#bf').style.width = (au.buffered.end(au.buffered.length - 1) / au.duration * 100) + '%'; } catch (e) { } };
+/* "Buffering" feedback instead of a silent pause. Only every 12 s so a
+   flaky stream does not nag. */
+let bufTip = 0;
+au.addEventListener('waiting', () => { if (!au.paused && Date.now() - bufTip > 12000) { bufTip = Date.now(); toast('Buffering…'); } });
 function icons() { const h = au.paused ? I.play : I.pause;
   $('#pIco').outerHTML = h.replace('<svg', '<svg id="pIco"'); $('#mIco').outerHTML = h.replace('<svg', '<svg id="mIco"');
   $('#pIco2').outerHTML = h.replace('<svg', '<svg id="pIco2" style="width:24px;height:24px;fill:var(--acd);stroke:none"');
   $('#play').classList.toggle('pause', au.paused);
   $('.fsart')?.classList.toggle('go', !au.paused); }
-au.onplay = () => { icons(); markRows(); if ($('#fs').classList.contains('open') && S.fsTab === 'art') startViz(); };
-au.onpause = () => { icons(); markRows(); };
+au.onplay = () => { icons(); markRows(); mediaState(); if ($('#fs').classList.contains('open') && S.fsTab === 'art') startViz(); };
+au.onpause = () => { icons(); markRows(); mediaState(); };
 au.onended = () => {
   if (S.tmrEnd === -1) { S.tmrEnd = 0; return toast('Sleep timer stopped playback'); }
   if (S.room) { if (amHost()) rAct('next'); return; }   // only the host advances, or everyone would race
   skip(true);
 };
+/* Stream failures used to be a dead end: one error and the track skipped,
+   and on a flaky connection every other track "didn't play". The ladder
+   now walks quality down one rung at a time, tries the CDN directly (the
+   proxy is not the only way in), and only gives up after all of that. */
+const QLADDER = ['320', '160', '96', '48', '12'];
 au.onerror = () => { if (!au.src) return; errN++;
-  if (errN > 3) { au.pause(); errN = 0; return toast('Playback trouble — paused'); }
-  if (S.adapt && S.q !== '96') { toast('Network is slow — lowering quality'); return setQ('96'); }
+  const s = S.queue[S.idx];
+  if (errN === 2 && S.adapt && S.q !== '12') {
+    const i = QLADDER.indexOf(S.q);
+    if (i >= 0 && i < QLADDER.length - 1) {
+      toast('Network is slow — lowering quality');
+      return setQ(QLADDER[i + 1]);
+    }
+  }
+  if (errN === 3 && s && s.u) {
+    /* Try the CDN directly — CORS is open on the media host, so the browser
+       can stream it without our proxy in the path. Fixes the track that
+       would not play when the proxy hiccups. */
+    const d = s.u[S.q] || s.u['160'] || s.u['96'];
+    if (d && au.src.includes('/stream')) {
+      const t = au.currentTime, p = !au.paused;
+      au.src = d; try { au.currentTime = t; } catch (e) { }
+      errN = 1;
+      if (p) au.play().catch(() => { });
+      return toast('Trying direct stream');
+    }
+  }
+  if (errN > 4) { au.pause(); errN = 0; return toast('Playback trouble — paused'); }
   toast('Stream error, skipping'); setTimeout(() => skip(true), 700); };
 
 (() => {
@@ -3400,7 +3725,7 @@ Please note: takedown notices should generally be directed at the party that act
 
 /* ================= INIT ================= */
 fetch('logo.svg').then(r => r.text()).then(t => $('#mk').innerHTML = t).catch(() => { });
-setTheme(S.theme); setDens(S.dens); setAccent(S.accent); setFont(S.font); setCorner(S.corner); setGlass(S.glass);
+setTheme(S.theme); setDens(S.dens); setAccent(S.accent); setFont(S.font); setCorner(S.corner); setGlass(S.glass); setGlassW(S.glw);
 if (LS('hc', false)) { document.body.dataset.hc = '1'; $('#swHC').classList.add('on'); }
 buildEQ(); paintPresets(); paintModes(); paintAppearance(); paintQ(); syncKnobs();
 paintQPill();
@@ -3444,7 +3769,10 @@ setTimeout(() => {
    returning to the tab, starting or stopping playback, changing track. */
 function liveTick() {
   clearInterval(liveTimer);
-  liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 12000);
+  /* Real-time-ish listener counter: every 6s while the tab is in front, so
+     "online now" moves while people watch it, and the moment the app comes
+     back from the background it refreshes. Never runs in a hidden tab. */
+  liveTimer = setInterval(() => { if (!document.hidden) beat(); }, 6000);
 }
 beat(); liveTick();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { beat(); liveTick(); } });
@@ -3483,3 +3811,38 @@ if (rp) setTimeout(() => askJoin(rp), 700);
     }, 450);
   }
 }
+
+/* ---------- boot extras ---------- */
+/* Resume where you left off: the last queue and its position were saved when
+   playback started (see play()). Offer it after the UI is up. */
+setTimeout(() => {
+  if (S.resuming && S.queue.length && S.idx >= 0) {
+    const s = S.queue[S.idx] || S.queue[0];
+    if (s) notice('Resume \u201c' + s.t + '\u201d?', 'Play', () => {
+      S.resuming = false; try { play(S.queue, Math.max(0, S.idx)); } catch (e) { }
+    });
+  }
+}, 2600);
+
+/* Update-aware boot: ask the server what interface it knows about, compare
+   with the version it is serving, and surface "Update available" once a day
+   instead of expecting anyone to read Release notes. The update source is
+   never user-editable (see bug 36) — this only reads it. */
+async function bootUpdateCheck() {
+  try {
+    const st = await api('/api/selfupdate/status', { cache: false, tries: 0 });
+    const src = st && st.source; if (!src) return;
+    const r = await fetch(src + 'version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const m = await r.json();
+    const cur = st.version || 0;
+    if (m.version && m.version > cur) {
+      const last = LS('nv', 0);
+      if (Date.now() - last > 6 * 3600e3) {
+        SET('nv', Date.now());
+        notice('Update v' + m.version + ' available', 'See it', () => nav('get'));
+      }
+    }
+  } catch (e) { }
+}
+setTimeout(bootUpdateCheck, 3500);

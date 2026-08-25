@@ -33,13 +33,22 @@
     "win": {
       "target": [
         {
-          "target": "dir",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
+      "artifactName": "SonoraSetup.${ext}",
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sonora"
     },
     "mac": {
       "target": [
@@ -49,10 +58,19 @@
             "x64",
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
+      "artifactName": "Sonora-${version}-mac-${arch}.${ext}",
       "icon": "assets/icon.png",
-      "category": "public.app-category.music"
+      "category": "public.app-category.music",
+      "identity": null
     },
     "linux": {
       "target": [
@@ -69,6 +87,7 @@
           ]
         }
       ],
+      "artifactName": "Sonora-${version}-${arch}.${ext}",
       "icon": "assets/icon.png",
       "category": "Audio",
       "maintainer": "Sonora",
@@ -87,5 +106,5 @@
     "electron": "28.3.3",
     "electron-builder": "^24.13.3"
   },
-  "homepage": "https://github.com/USER/sonora"
+  "homepage": "https://github.com/twgw9/sonora"
 }

@@ -1,0 +1,1012 @@
+================================================================================
+
+SONORA — COMPLETE HANDOVER DOCUMENT
+
+================================================================================
+
+Written for a developer who has never seen this project and has to take it over.
+
+Read it top to bottom once before touching anything.
+
+Project      Sonora, a music player
+Repository   https://github.com/twgw9/sonora
+Telegram     https://t.me/sonoramusicm
+Interface    v37 (app.js BUILD string)              [updated 2026-08-25]
+Payload      v11 (version.json, this is the number that drives updates)
+Date         2026-08-25  (v10: see CHANGES.md)
+Licence      MIT on the code only — see LICENSE and DISCLAIMER.md
+
+NOTE (2026-08-25): this file was restored to the repository — it was missing
+from git although every doc points at it. One deliberate change: the signing
+keystore PASSWORD in PART 10 is redacted. PART 10 itself says a password must
+never be published; a public repo is exactly the wrong place for it.
+
+================================================================================
+
+PART 1 — WHAT SONORA IS
+
+================================================================================
+
+A music player that runs as:
+
+  - a website        (Node server, zero npm dependencies)
+  - an Android app   (WebView + a Java HTTP server inside the APK)
+  - a Windows app    (Electron, real NSIS installer)
+  - a macOS app      (Electron, zip of the .app)
+  - a Linux app      (Electron, AppImage and .deb)
+
+All five run the same HTML, CSS and JavaScript. There is one codebase. The
+desktop and Android builds wrap it; they do not fork it.
+
+It holds no music. It reads a public endpoint that JioSaavn already serves to
+its own website, and streams come straight from their CDN to the listener's
+device. Nothing audio-related passes through our server.
+
+WHAT MAKES IT DIFFERENT FROM A WRAPPER
+  - a real 7-band biquad equaliser, not a preset switch
+  - 16 sound modes built on a genuine Web Audio chain
+  - synced lyrics from two sources
+  - listening rooms where several people hear the same thing in sync
+  - offline downloads
+  - it updates itself from GitHub with no app store
+
+================================================================================
+
+PART 2 — FILE BY FILE
+
+================================================================================
+
+ROOT
+  index.html          348 lines   the shell: every panel, sheet and bar
+  app.js             3505 lines   the entire client. state, audio, views, rooms
+  styles.css         1300 lines   12 themes, 4 surface styles, 4 densities
+  sw.js                67 lines   service worker, network-first
+  server.js          1025 lines   the backend, zero dependencies
+  start.js             44 lines   supervisor that restarts the worker
+  native.js           215 lines   Android bridge (only loaded inside the APK)
+  desktop-hooks.js    140 lines   Electron bridge (no-op elsewhere)
+  version.json                    THE UPDATE TRIGGER. bump "version" to ship
+  update.json                     override for the update source, rarely used
+  manifest.webmanifest            PWA manifest, 4 home screen shortcuts
+
+BUILD AND RELEASE
+  .github/workflows/release.yml   builds all 3 desktops on GitHub, publishes   [restored 2026-08-25]
+  desktop/build.sh                local build
+  desktop/make-icons.js           draws icon.png and app.ico from code
+  desktop/installer.nsi           NSIS script for the Windows installer
+  desktop/main.js                 Electron main process
+  desktop/preload.js              Electron bridge
+  desktop/package.json            electron-builder config
+  build-apk.sh                    rebuild the Android app
+  release.sh                      bump version, run tests, commit, push
+  publish.sh                      upload installers to a GitHub release
+
+TESTS  (see PART 8)
+  tests/deep.js       63 checks   every view, panel, edge case
+  tests/room.js       12 checks   two browsers in one room
+  tests/hunt.js       17 checks   downloads page, room stress
+  tests/platform.js   60 checks   six simulated devices
+  tests/release.js     7 checks   GitHub release fallback
+  tests/perf.js       13 checks   runtime cost, stale replies
+  tests/stress.js     18 checks   heavy use, leaks, missing browser APIs
+                     ---
+                     190 checks total
+
+DOCS
+  README.md       overview
+  SETUP.md        running locally
+  DEPLOY.md       deploying to Render
+  UPLOAD.md       putting it on GitHub — READ THIS FIRST
+  UPDATES.md      how over-the-air updates work
+  DISCLAIMER.md   copyright and legal, written to be published as-is
+  LICENSE         MIT, scoped to the code only
+  FINAL-TEST.md   a previous test report
+  HANDOVER.txt    this file
+
+================================================================================
+
+PART 3 — HOW THE BACKEND WORKS
+
+================================================================================
+
+server.js has ZERO npm dependencies. Node's standard library only. That is
+deliberate: no supply chain, no audit noise, no install step, and it starts in
+under a second on a cold Render dyno.
+
+  node start.js        # supervisor, this is what production runs
+  node server.js       # the worker directly, for debugging
+
+start.js respawns the worker with exponential backoff if it ever exits, and
+kills it if /healthz stops answering for 45 seconds.
+
+REQUIRED NODE FLAG
+  --openssl-legacy-provider
+
+  JioSaavn encrypts media URLs with DES-ECB. Node 17 and later disable that
+  cipher by default. Without the flag every stream URL fails to decrypt and
+  nothing plays. start.js passes it automatically. If you run server.js by
+  hand you must pass it yourself.
+
+THE UPSTREAM API
+  base: https://www.jiosaavn.com/api.php
+        ?_format=json&_marker=0&api_version=4&ctx=web6dot0&__call=...
+
+  calls in use:
+    webapi.getLaunchData        home feed
+    search.getResults           songs, paged
+    search.getAlbumResults      albums
+    search.getArtistResults     artists
+    search.getPlaylistResults   playlists
+    autocomplete.get            type-ahead
+    content.getTopSearches      trending queries
+    content.getAlbumDetails     album tracklist
+    playlist.getDetails         playlist tracklist
+    song.getDetails             one track
+    lyrics.getLyrics            lyrics (poor coverage, see PART 5)
+    reco.getreco                similar tracks
+
+  DES-ECB key: 38346591, decrypts more_info.encrypted_media_url
+  Quality tiers: swap _96.mp4 for _12/_48/_96/_160/_320.mp4 in the CDN URL
+  The CDN sends Access-Control-Allow-Origin: *, so the browser streams direct
+
+  Every public mirror (saavn.dev and friends) is dead. Direct is the only path.
+
+OUR ROUTES
+  /api/home          home feed, language filtered
+  /api/search        songs only
+  /api/searchall     songs + albums + artists + playlists
+  /api/suggest       type-ahead
+  /api/song          one track
+  /api/album         album tracklist
+  /api/playlist      playlist tracklist
+  /api/similar       recommendations
+  /api/mix           artist radio, seeded from several queries
+  /api/mood          a mood or genre
+  /api/era           year-filtered
+  /api/goldmix       curated old mix
+  /api/legends       curated artists
+  /api/top           top searches
+  /api/lyrics        two sources, see PART 5
+  /api/live          listener heartbeat
+  /api/health        metrics
+  /api/downloads     which installers exist, local or on a GitHub release
+  /api/room/*        state, act, peek, sub (SSE)
+  /api/selfupdate/*  status, run, rollback            [source removed 2026-08-25]
+  /dl                audio proxy for downloads
+  /healthz           two bytes, for the platform's health check
+
+WHAT THE SERVER DOES BEYOND PROXYING
+
+  - LRU cache with stale-while-revalidate. A slow upstream serves stale data
+    rather than an error
+  - request coalescing. Fifty people asking for the same album make one
+    upstream call
+  - circuit breakers per upstream, with three backup mirrors
+  - gzip and brotli, precompressed and cached in memory
+  - brotli quality 6 immediately, then quality 11 in the background, swapped
+    in when ready. About 10% smaller with no cost on the first request
+  - ETag and 304
+  - token bucket rate limit, 600 burst and 60 per second
+  - range proxy for audio, so seeking works through /dl
+  - Server-Sent Events for rooms
+  - self-update from Git
+
+================================================================================
+
+PART 4 — HOW THE CLIENT WORKS
+
+================================================================================
+
+app.js is one file with no build step. No bundler, no transpiler, no
+framework. Edit it, reload, done. That is the whole point: anyone can open it
+and change something without learning a toolchain first.
+
+  S               the state object. Everything persisted lives here
+  LS() / SET()    typed localStorage read and write. LS validates the shape,
+                  so corrupt storage degrades instead of blanking the app
+  render()        clears #view and calls the function for the current view
+  nav(v)          change view, push history
+  play(list, i)   set the queue and start
+
+VIEWS
+  home trend search mood era studio room pls stats prefs get legal
+  liked queue recent dls
+
+THE AUDIO CHAIN
+
+  source
+    -> [bypass, when nothing is engaged]
+    or
+    -> dcBlock 18 Hz highpass
+    -> 7 x peaking EQ
+    -> lowpass
+    -> stereo width matrix
+    -> panner (oscillator-driven when auto-pan is on)
+    -> dry / reverb split
+    -> compressor
+    -> preGain
+    -> soft clip, 4x oversampled, only when EQ peak is over 1 dB
+    -> makeup gain
+    -> analyser
+    -> destination
+
+  16 modes, 10 EQ presets. Reverb impulse responses are generated in code:
+  8 discrete early reflections, a progressively low-passed diffuse tail,
+  per-ear decorrelation, peak normalised. Cached per room size.
+
+  Crossfade is equal-power (sin/cos). The next track is prewarmed at 12
+  seconds remaining with a 1-byte range request.
+
+STORAGE CAPS  (localStorage has about 5 MB per origin)
+  liked   700
+  recent  120
+  dls     400
+  queue   400
+
+================================================================================
+
+PART 5 — EVERY BUG THAT WAS FIXED, AND WHY
+
+================================================================================
+
+These are real defects that were found, reproduced, fixed and covered by a
+test. If you refactor, do not undo them.
+
+--- CRASHES AND BREAKAGE ---
+
+ 1. SERVER DIED ON A STREAM ABORT
+    A drain promise never resolved when the client hung up mid-stream, so the
+    worker leaked a pending promise and eventually died.
+    Fix: abort guards, uncaughtException and unhandledRejection handlers, and
+    the supervisor in start.js.
+
+ 2. ROOMS WERE COMPLETELY BROKEN WITHOUT EventSource
+    joinRoom() set the room state and then called `new EventSource(...)` with
+    no guard. Where EventSource is missing or throws — private modes, older
+    WebViews, some corporate proxies — the throw happened BEFORE the 4-second
+    polling fallback was started. The comment beside it even said "safety net
+    so the room still works if SSE is blocked", but the net was unreachable.
+    The room looked joined and then froze forever.
+    Fix: SSE is optional, the poll always starts, and runs at 2s instead of 4s
+    when it is the only channel.
+
+ 3. SERVICE WORKER WAS CACHE-FIRST
+    Users never saw updates.
+    Fix: network-first, plus a BUILD fingerprint that clears caches when the
+    version changes.
+
+ 4. vRoom() QUERIED A DETACHED DOM
+    TypeError on null, and the entire room body vanished.
+    Fix: local element references.
+
+ 5. THE HOST COULD NOT HEAR THEIR OWN MUSIC
+    `if (!amHost()) follow(d)` excluded the host from playback.
+    Fix: everyone follows; the host is simply not drift-corrected.
+
+ 6. au.volume WAS UNCLAMPED
+    Anything outside 0 to 1 throws IndexSizeError.
+    Fix: one clamped setVol() writer.
+
+ 7. CORRUPT localStorage BLANKED THE APP
+    uniqById threw on a malformed value and nothing rendered.
+    Fix: LS() validates the shape of every stored value.
+
+ 8. THE OFFLINE BANNER NEVER APPEARED
+    Four network retries ran first, so by the time it showed you had already
+    given up.
+    Fix: check navigator.onLine immediately.
+
+ 9. THE HOME DOWNLOAD STRIP CRASHED THE HOME PAGE
+    It touched six elements after an await without checking the page was
+    still there. Navigate during that request and it threw, taking the rest
+    of the home page setup with it.
+    Fix: an alive() guard after every await.
+
+10. CLOSING THE DOWNLOAD SHEET DID NOT STOP THE DOWNLOAD
+    Dismissing it left the loop running invisibly. The rest of the album kept
+    downloading with no progress shown and no way to stop.
+    Fix: the loop also breaks when the sheet is gone.
+
+11. EXPORTED LIBRARIES LEAKED
+    The object URL was never revoked, pinning every export's blob in memory
+    for the life of the tab. An unavailable createObjectURL also took out the
+    rest of the settings wiring.
+    Fix: revoke after 30s, with a data URL fallback.
+
+12. location.reload(true) NEVER CAME BACK ON FIREFOX
+    The argument has been ignored for years and Firefox rejects the call.
+    Force update cleared the caches and left a dead page.
+    Fix: plain reload().
+
+13. DESTRUCTIVE ACTIONS USED A DIALOG THAT IS OFTEN SUPPRESSED
+    Delete playlist, erase everything, revert, roll back and force update all
+    called the browser's confirm(). That is blocked outright in an installed
+    PWA and in the Android WebView, so the action silently did nothing with
+    no feedback at all.
+    Fix: askConfirm(), which uses Sonora's own sheet. Works everywhere, and
+    each one now says exactly what it is about to destroy.
+
+--- PERFORMANCE ---
+
+14. THE PLAYBACK TICK DID 2,160 DOM OPERATIONS A MINUTE
+    ontimeupdate fires about 4x a second. Each pass re-queried eleven
+    elements and rewrote every one, whether the value had changed or not and
+    whether the bar was on screen or not.
+    Fix: elements looked up once and cached, every write guarded by the last
+    value written.
+    MEASURED: 2,160/min -> 240/min. Zero while the clock is not moving.
+
+15. AUTO-PAN RAN A 60fps JAVASCRIPT LOOP
+    A requestAnimationFrame loop wrote pan.value sixty times a second to
+    trace a slow sine wave — while paused, and in a background tab.
+    Fix: an OscillatorNode connected to the pan AudioParam. The audio thread
+    draws the same curve for no main-thread cost. The old loop is kept as a
+    fallback for browsers that refuse to modulate an AudioParam.
+
+16. THE VISUALISER ALLOCATED 3,840 OBJECTS A SECOND
+    64 CanvasGradient objects per frame at 60fps, all discarded immediately.
+    It also kept drawing while the tab was hidden or the track was paused.
+    Fix: one gradient per run, and it stops when hidden or paused.
+
+17. will-change:transform WAS ON EVERY CARD PERMANENTLY
+    80+ GPU layers held alive at all times. Real memory on a phone.
+    Fix: scoped to hover, active and focus.
+
+18. THE BOOT EQUALISER ANIMATED FOR THE WHOLE SESSION
+    visibility:hidden does not stop a CSS animation. Classic mistake.
+    Fix: animation:none on .boot.gone.
+
+19. THE ARTWORK DRIFTED WHILE PAUSED
+    Fix: animation-play-state paused unless .go is set.
+
+20. HOME LOADED 3.6 MB OF IMAGES
+    80 covers at 500x500.
+    Fix: imgAt() and imgSet() pick 50/150/500 by context.
+    MEASURED: 3.6 MB -> 0.5 MB, 86% less.
+
+21. CSS HAD 24 APPENDED PATCH LAYERS
+    .cd was defined 25 times — set, fully undone, set again. 130 duplicate
+    selectors.
+    Fix: flattened to 223 unique selectors. 101 KB -> 91 KB.
+
+22. STATIC FILES WERE ONLY EVER BROTLI QUALITY 6
+    Fix: q6 immediately so the first visitor never waits, then q11 built in
+    the background and swapped in.
+    MEASURED: app.js 53.6 KB -> 48.4 KB, styles.css 17.8 -> 16.0.
+
+--- CORRECTNESS ---
+
+23. A SLOW SEARCH REPLY OVERWROTE A NEWER ONE
+    Debouncing does not stop a slow reply from a query you already moved on
+    from landing last. On a patchy connection you saw suggestions for
+    something you had stopped typing.
+    Reproduced by delaying the first /api/suggest call by 1.4 seconds.
+    Fix: every request carries a sequence number; stale ones are dropped.
+
+24. LYRICS APPEARED FOR ABOUT ONE TRACK IN THREE
+    JioSaavn simply does not have lyrics for most of its own catalogue —
+    most tracks return has_lyrics false and the call fails outright. It also
+    never has timings.
+    Fix: LRCLIB added as a second source (free, no key, real synced lyrics).
+    Both are queried in parallel, a synced result beats a plain one, misses
+    are cached briefly so a track with no lyrics does not re-hit both
+    providers every time it comes round.
+    MEASURED: 1 of 3 -> 3 of 3, all three synced.
+
+25. SEARCH RETURNED ONE PAGE OF 40
+    Fix: four pages in parallel plus two query variations, deduplicated,
+    sorted by title match then play count.
+    MEASURED: 40 -> 120 songs. Albums and artists 14 -> 20.
+
+26. THE 3-DOT MENU NEVER APPEARED ON HOME CARDS
+    The check was `x.k === 'song'`, but the home feed labels its own rows —
+    a playable track there arrives tagged 'album'. So the menu was invisible
+    exactly where people look first.
+    Fix: the caller says whether it is a track; x.k is not trusted.
+    MEASURED: 0 of 80 cards -> 80 of 80.
+
+27. QUICK ACTIONS WERE HOVER-ONLY
+    A phone has no hover, so on a touch device the only way to queue or
+    download a track was to play it first.
+    Fix: visible at 0.82 opacity at rest, full on hover.
+
+28. THREE CONFLICTING .grid RULES AT THE SAME BREAKPOINT
+    44vw, then 42vw, then a bare gap. Which one won depended on source order.
+    Cards were so large a phone showed about four albums per screen.
+    Fix: one authoritative mobile block, last in the file. 108px cards,
+    96px under 420px wide.
+
+29. THE SEARCH BOX WAS CUT IN HALF ON A PHONE
+    It shared the top bar with five other controls.
+    Fix: at phone widths it takes the row to itself, input font 16px so iOS
+    does not zoom the page, suggestions scroll instead of being clipped.
+
+30. THE SUGGESTION LIST WAS CLIPPED, NOT SCROLLABLE
+    overflow:hidden with a max-height. Anything past the fifth suggestion
+    was unreachable.
+    Fix: overflow-y:auto.
+
+31. iPad WAS DETECTED AS macOS
+    iPadOS reports MacIntel and a Mac user agent. The only distinguishing
+    signal is maxTouchPoints > 1. iPad users were offered a 91 MB desktop
+    build they cannot run.
+    Fix: both the home strip and the download page check touch points.
+
+32. THE GET THE APP PAGE HAD NO iPHONE CARD AT ALL
+    Fix: an iPhone and iPad card with a real four-step Safari guide.
+
+33. WINDOWS AND macOS INSTALL INSTRUCTIONS WERE WRONG
+    Windows said "unzip and run Sonora.exe" when it is an installer. macOS
+    said "open the DMG" when it ships as a zip.
+    Fix: rewritten, including the Gatekeeper right-click-Open step.
+
+34. THE DOWNLOAD STRIP COULD NOT BE DISMISSED
+    Fix: an X button that remembers, and never comes back.
+
+35. HOME WIDGETS PUSHED THE MUSIC BELOW THE FOLD
+    On a fresh install every one of them read zero.
+    Fix: off by default. Settings turns them on, each one individually.
+
+36. THE UPDATE SOURCE WAS USER-EDITABLE
+    A field that repoints the app at any URL is a way to hand someone a link
+    that turns their copy into something else.
+    Fix: baked in, no field.   [2026-08-25: also removed /api/selfupdate/source
+    from server.js and made the Android Settings field read-only — both were
+    still editable.]
+
+--- BUILD AND RELEASE ---
+
+37. WINDOWS SAID "NOT AVAILABLE" EVEN AFTER UPLOADING TO GITHUB
+    *** THIS WAS THE BIGGEST AND LONGEST-RUNNING PROBLEM ***
+
+    Diagnosed by querying the GitHub API directly:
+      repo twgw9/sonora  -> exists, public, files uploaded   OK
+      version.json       -> HTTP 200, reachable              OK
+      releases           -> ZERO
+
+    The installers are 64 to 91 MB each. GitHub refuses any single file over
+    100 MB in a push and warns above 50 MB, so they cannot be committed. They
+    have to live on a RELEASE. No release had ever been published, so
+    SonoraSetup.exe did not exist anywhere on the internet. The site was
+    telling the truth: it could not find one.
+
+    Fix, in two parts:
+      a) server.js falls back to the assets on the latest GitHub release
+         whenever downloads/ is empty. A local file always wins.
+      b) .github/workflows/release.yml builds all three desktop targets on
+         GitHub's own runners and publishes them automatically.
+
+    [2026-08-25: part (b) had actually never been committed — the .github/
+    directory was absent from the repository, which is exactly why releases
+    are still ZERO today. The workflow is now in the repo. After pushing,
+    the first Release (with all installers + the APK) is created by GitHub
+    Actions on the version bump. This is THE one thing to do first.]
+
+38. THE WINDOWS TARGET WAS "dir", WHICH PRODUCES NO EXE
+    desktop/package.json asked for a folder, not an installer. Locally that
+    was necessary — no wine — and the exe was assembled afterwards by hand
+    with makensis. On GitHub's Windows runners it is wrong.
+    Fix: target is nsis. build.sh still uses dir when not on Windows.
+    [2026-08-25: package.json still said "dir" — the fix had not been
+    committed. Done now: win target is nsis, build.sh branches on the OS.]
+
+39. THE WINDOWS INSTALLER WAS SILENTLY TRUNCATED, TWICE
+    A background makensis run was killed by a timeout partway through,
+    leaving a 44 MB SonoraSetup.exe that looked valid to `file` but was
+    missing most of its payload.
+    Caught by comparing against the compressor's own reported byte count:
+    217 MB in, 32.1% out, 67 MB expected.
+    Lesson: always check the size, not just that the file exists.
+    [2026-08-25: the workflow now fails the build if SonoraSetup.exe is
+    missing or under 5 MB.]
+
+40. THE deb BUILD FAILED AND IT LOOKED LIKE AN fpm BUG
+    It was not. /tmp was full — 391 MB free, fpm needs 200 MB+ for its tar
+    staging. Clearing /tmp fixed it immediately.
+
+41. THE SIGNING KEYSTORE WAS ABOUT TO BE PUBLISHED
+    apk/sonora-signing.jks was staged for commit with its password written
+    in the docs beside it. Anyone pulling the repo could have signed an APK
+    that Android accepts as a genuine Sonora update.
+    Fix: gitignored. See PART 10.
+    [2026-08-25: the keystore is still gitignored (apk/*.jks). HANDOVER.txt
+    was restored to the repo with the password redacted — a password has no
+    business in a public repository.]
+
+42. THE SAME 2.8 MB APK WAS COMMITTED THREE TIMES
+    Byte for byte identical in three places.
+    Fix: one copy.
+    [2026-08-25: it had crept back in — apk/Sonora.apk, sonora/apk/
+    Sonora.apk and the copy inside sonora/Sonora-source.zip. The nested
+    copies are gone; apk/Sonora.apk is the only one.]
+
+43. ICONS KEPT DISAPPEARING AND BREAKING THE BUILD
+    Fix: desktop/make-icons.js draws them from code. Nothing binary to keep
+    in sync, and a fresh checkout always has them.
+
+--- ONE MORE, WORTH KNOWING ---
+
+44. A TEST PASSED WHILE TESTING NOTHING
+    tests/platform.js simulates six devices. jsdom accepts a `userAgent`
+    option and then silently ignores it, so every simulated device reported
+    as Linux. The test was green and meaningless.
+    Caught only because the iPhone case failed for an unrelated reason.
+    Fix: navigator.userAgent, platform and maxTouchPoints are pinned by hand.
+    Documented in tests/README.md so it is not reintroduced.
+
+================================================================================
+
+PART 6 — WHAT IS IN THE APP RIGHT NOW
+
+================================================================================
+
+PLAYBACK
+  16 sound modes, 10 EQ presets, 7-band EQ
+  5 quality tiers, 12 to 320 kbps, with adaptive downgrade on a slow network
+  gapless crossfade, next-track prewarm
+  sleep timer, shuffle, three repeat modes
+  synced lyrics with a highlighted current line
+  lock screen and notification controls with a working scrubber
+
+DISCOVERY
+  home feed in 14 languages
+  search: 120 songs, 20 albums, 20 artists, 20 playlists
+  16 moods, 7 eras, artist radio, similar tracks
+  command palette on Ctrl+K
+
+LIBRARY
+  liked, playlists, history, downloads
+  add to playlist from anywhere: card, row, context menu, now playing
+  export and import as JSON
+  insights, all computed on the device
+
+ROOMS
+  create or join with a 5-character code
+  everyone hears the same thing, latency compensated
+  DJ mode and host mode, host transfer, claim when the host leaves
+  chat, in-room search, five ways to queue something
+
+APPEARANCE
+  12 themes    Venom Cobalt Ember Orchid Slate Paper Sakura Carbon
+               Midnight Forest Sunset Mono
+  4 surfaces   Flat Soft Outline Edge
+  6 accents, 4 typefaces, 3 corner styles, 4 densities
+  glass mode, high contrast
+
+PLATFORM
+  4 home screen shortcuts: Trending, Liked, Search, Rooms
+  4 optional home widgets, off by default
+  installable as a PWA
+  works offline for anything already downloaded
+
+================================================================================
+
+PART 7 — HOW TO SHIP AN UPDATE
+
+================================================================================
+
+THE ONLY THING THAT MATTERS:
+
+    bump "version" in version.json, then push
+
+That number is the trigger for everything. Change fifty files and forget the
+bump, and nothing updates anywhere — no client has any reason to look.
+
+WHAT HAPPENS AUTOMATICALLY
+  1. GitHub Actions sees version.json changed
+  2. builds Windows on a Windows runner, macOS on a Mac, Linux on Ubuntu
+  3. publishes all of them plus the APK as a release tagged vN
+  4. every website picks up the new interface within 30 minutes
+  5. Android checks on launch and every 6 hours
+  6. desktop checks on launch
+
+  Watch it in the Actions tab. A failure is a red mark with a log saying
+  which step and why.
+
+WHAT DOES NOT UPDATE OVER THE AIR
+  Changes to app.js, index.html, styles.css reach every device on their own.
+  Changes to the Android Java or the Electron shell need a new installer —
+  which is exactly what bumping the version produces.
+
+SAFETY
+  Each client downloads the new interface to a temporary copy, checks it
+  parses, and rejects it if not. A bad upload cannot brick an installed app.
+  There is a Roll back button in Settings regardless.
+
+================================================================================
+
+PART 8 — TESTING
+
+================================================================================
+
+  npm install --no-save jsdom      # once
+  node start.js                    # terminal 1
+  node tests/deep.js               # terminal 2, and the rest
+
+All seven: 190 checks when the installers are present, 186 without
+(four platform checks need real files to download). They must all pass
+before you ship.
+
+  deep.js       63  every view twice, every panel, 16 modes, 10 presets,
+                    5 quality tiers, 12 themes, keyboard shortcuts, search
+                    edge cases including HTML injection, corrupt storage,
+                    a fully offline start
+  room.js       12  two independent browsers sharing a room
+  hunt.js       17  the downloads page, room buttons with an empty queue,
+                    rapid adds, chat spam, leave and rejoin
+  platform.js   60  six simulated devices, right build highlighted, every
+                    advertised download HEAD-checked
+  release.js     7  the GitHub release fallback, against a fake api.github.com
+  perf.js       13  DOM operations per second of playback, idle frames,
+                    node growth, the stale search reply
+  stress.js     18  120 skips, 120 scrubs, 64 mode flips, 150 tracks ended,
+                    5 exports, then checks nothing leaked
+
+release.sh runs the parseable ones and refuses to ship on a failure, and also
+refuses if any emoji appears in the UI files.
+
+WRITING A NEW TEST — TWO TRAPS
+  1. jsdom ignores the userAgent option. Pin navigator properties by hand.
+  2. Instrument the DOM AFTER the app script has run. Redefining
+     Node.prototype.textContent before boot breaks the app's own setup, and
+     you will spend an hour debugging your test instead of the code.
+
+================================================================================
+
+PART 9 — HOW TO MAKE IT BETTER
+
+================================================================================
+
+Ordered by value for effort. Everything here is a real gap, not a wishlist.
+
+--- HIGH VALUE, LOW EFFORT ---
+
+A. VIRTUAL SCROLLING ON LONG LISTS
+   A 120-result search builds 120 rows, each with an image and four buttons.
+   That is roughly 1,500 DOM nodes for a list where twelve are visible.
+   Render a window of about 30 and recycle on scroll.
+   Expect: noticeably faster search on a mid-range phone, less memory.
+
+B. AN IndexedDB CACHE FOR ARTWORK
+   Covers are refetched on every cold start. The HTTP cache helps but is
+   evicted aggressively on mobile. A small IndexedDB store keyed by URL,
+   capped at say 50 MB with LRU eviction, would make a repeat visit close to
+   instant and cut mobile data noticeably.
+
+C. PRELOAD THE NEXT TRACK'S ARTWORK AND LYRICS
+   The audio is already prewarmed at 12 seconds remaining. The cover and the
+   lyrics are not, so both flash in on track change.
+
+D. DEBOUNCE save()
+   It runs on every like, every play, every settings change, and serialises
+   the whole library each time. With 700 liked tracks that is a real
+   serialisation on the main thread. Coalesce writes into one per second.
+
+E. SPLIT app.js
+   3,505 lines in one file. It works, but finding anything means scrolling.
+   Split into audio.js, views.js, rooms.js, state.js and concatenate at build
+   time — keep the no-bundler property, just stop editing one huge file.
+
+F. AN ERROR BOUNDARY AROUND EACH VIEW
+   One thrown exception in one view currently leaves a blank page. Wrap the
+   render call and show a retry card instead.
+   [2026-08-25: DONE — render() now isolates each view and shows a retry card.]
+
+--- HIGH VALUE, MORE WORK ---
+
+G. REAL OFFLINE PLAYBACK
+   Downloads currently save a file to the device's download folder. They are
+   not playable from inside the app when offline. Store them in IndexedDB or
+   the Origin Private File System and serve them through the service worker
+   from a blob URL. This is the single biggest missing feature.
+
+H. A PROPER ANDROID PLAYER
+   The APK runs a WebView. It works, but background playback is at the mercy
+   of the WebView lifecycle, and rooms are disabled because they need a
+   shared server. A native ExoPlayer service with a MediaSession would give
+   reliable background audio, proper notification controls, Android Auto and
+   Bluetooth metadata.
+
+I. ROOMS OVER WEBSOCKETS
+   Currently SSE plus a 2 to 4 second poll. A WebSocket halves the latency
+   and removes the poll entirely. Keep SSE as the fallback — it already
+   exists and it survives proxies that block WebSockets.
+
+J. SERVER-SIDE PLAYLIST SYNC, OPTIONAL
+   Everything is on the device today, which is a feature. But losing a phone
+   loses the library. An opt-in encrypted blob sync, with the key derived
+   from a passphrase the server never sees, would fix that without making it
+   an account system.
+
+K. MORE LYRICS SOURCES
+   LRCLIB covers most popular music but is thin on regional releases.
+   Musixmatch has the best coverage but needs a key and forbids this use.
+   Genius has no timings. Realistically: improve the LRCLIB match scoring for
+   Hindi and regional titles, where transliteration varies wildly.
+
+--- OPTIMISATION, MEASURED FIRST ---
+
+L. SHIP A MINIFIED app.js
+   211 KB raw, 48 KB brotli. Minification would get raw to roughly 120 KB and
+   brotli to maybe 40 KB. Parse time on a slow phone matters more than
+   transfer here. Do it as a build step, keep the readable source.
+
+M. LAZY-LOAD THE HEAVY VIEWS
+   Studio, Insights and Legal are large and rarely opened first. Splitting
+   them out would cut the initial parse.
+
+N. content-visibility ON OFF-SCREEN SECTIONS
+   The home page has six rails. `content-visibility:auto` with a
+   `contain-intrinsic-size` lets the browser skip layout for what is not
+   visible. Usually a large win for a long page, and it is three lines.
+
+O. AN HTTP CACHE LAYER IN FRONT OF THE UPSTREAM
+   The in-memory cache dies with the process. On Render's free tier the dyno
+   sleeps after 15 minutes, so every cold start refetches everything. A small
+   disk cache, or Redis if you are paying anyway, would make the wake-up much
+   faster.
+
+P. SERVE ARTWORK THROUGH THE SERVER WITH A LONG CACHE HEADER
+   Covers come straight from the JioSaavn CDN today. Proxying them would let
+   you set immutable cache headers, convert to WebP, and stop leaking the
+   listener's IP to a third party on every image. It costs bandwidth, so
+   measure before committing.
+
+--- THINGS TO BE CAREFUL WITH ---
+
+  - Do not add a framework. The no-build-step property is why this is
+    maintainable by one person. React would add 40 KB and a toolchain to
+    solve a problem this app does not have.
+  - Do not add npm dependencies to server.js without a strong reason. Zero
+    dependencies means it starts fast and never breaks on an audit.
+  - Do not put the emoji back. Every one was removed deliberately.
+  - Do not make the update source editable. See bug 36.
+
+================================================================================
+
+PART 9B — FEATURES THAT COULD BE ADDED
+
+================================================================================
+
+Not gaps, not bugs. Things that would make it a better product. Ordered by
+how much people would actually notice them.
+
+WOULD BE NOTICED IMMEDIATELY
+
+  1. A QUEUE THAT SURVIVES A RESTART
+     Close the app mid-album and you lose your place. Persist the queue and
+     the position, and offer "resume where you left off" on launch.
+     Small change, disproportionate effect.
+
+  2. SLEEP TIMER THAT FADES OUT
+     It currently stops dead. Fading over the last 30 seconds is two lines
+     and feels enormously better at 1am.
+
+  3. A PROPER "PLAY NEXT" QUEUE, SEPARATE FROM THE MAIN ONE
+     Spotify's model: things you explicitly queue jump ahead of the
+     algorithmic tail, and are visually distinct. The plumbing is already
+     there in S.queue; it needs a second list and a merge on read.
+
+  4. SEARCH FILTERS
+     Songs / albums / artists / playlists tabs on the results page. The
+     server already returns all four separately.
+
+  5. RECENTLY SEARCHED
+     Five recent queries under an empty search box. Trivial, and people
+     re-search the same things constantly.
+
+  6. A "SIMILAR TO THIS" BUTTON ON THE NOW PLAYING SCREEN
+     /api/similar already exists and is only reachable through the context
+     menu.
+
+WORTH THE WORK
+
+  7. SMART PLAYLISTS
+     "Everything I liked this month", "songs I skip", "not played in a year".
+     All of the data is already in S.stats and S.recent. It is a filter UI
+     over data you already have.
+
+  8. CROSSFADE BETWEEN ANY TWO TRACKS, USER-CONFIGURABLE
+     There is an equal-power crossfade already but it is fixed. Expose the
+     duration, 0 to 12 seconds, and let it apply on manual skip too.
+
+  9. A REAL EQUALISER CURVE DISPLAY
+     Seven sliders is fine, but drawing the resulting frequency response
+     above them makes the whole feature legible. getFrequencyResponse() on
+     each BiquadFilterNode gives you the data directly.
+
+ 10. LISTENING HISTORY WITH DATES
+     S.recent is a flat list. Grouping by day, and a small calendar heat
+     map, turns it into something people actually revisit.
+
+ 11. IMPORT FROM SPOTIFY OR YOUTUBE
+     Paste a playlist URL, match each track by title and artist, build a
+     Sonora playlist. Matching is imperfect but a 80% match rate is still
+     enormously useful for someone switching.
+
+ 12. SHAREABLE PLAYLIST LINKS
+     Encode a playlist into a URL fragment. No server storage needed for
+     anything under about 50 tracks, and it works offline.
+
+ 13. ROOM QUEUE VOTING
+     Rooms have a shared queue but the host controls it. Letting guests
+     upvote what is coming next turns it into a party feature.
+
+ 14. AN EQUALISER THAT REMEMBERS PER GENRE
+     Apply the bass boost automatically when a hip-hop track starts, the
+     vocal preset for a ghazal. The genre metadata is already in the
+     JioSaavn response and is currently discarded.
+
+INFRASTRUCTURE, NOT VISIBLE BUT VALUABLE
+
+ 15. A STATUS PAGE
+     /api/health already returns everything needed. A tiny public page that
+     renders it would answer "is it down or is it me" without asking.
+
+ 16. STRUCTURED LOGGING AND A CRASH REPORT ENDPOINT
+     Right now a client-side error dies silently on the user's device. An
+     opt-in "report this" button that posts the stack, the build number and
+     nothing else would find bugs you will otherwise never hear about.
+
+ 17. AN A/B SWITCH FOR THE UPDATE CHANNEL
+     A "beta" flag in Settings that reads version-beta.json instead. Ship to
+     yourself first, then everyone. Costs about twenty lines.
+
+================================================================================
+
+PART 10 — THINGS THAT WILL BITE YOU
+
+================================================================================
+
+THE SIGNING KEYSTORE
+
+  apk/sonora-signing.jks, password ********** (redacted — see note at the
+  top of this file), alias sonora.
+
+  IT MUST NEVER BE PUBLISHED. Anyone holding it can build an APK that Android
+  accepts as a genuine Sonora update and installs straight over a user's copy.
+
+  Back it up privately — password manager, encrypted drive. If you lose it,
+  no future APK can ever install over an existing one. Every user would have
+  to uninstall first and lose their entire library.
+
+  Change the password before you rely on it:
+
+    keytool -storepasswd -keystore apk/sonora-signing.jks
+    keytool -keypasswd -alias sonora -keystore apk/sonora-signing.jks
+
+  APK 1.8 was signed with a NEW key, so it will not install over 1.7 or
+  earlier. Android reports "App not installed". Users must uninstall first,
+  and should export their library from Settings before doing so.
+
+THE OPENSSL FLAG
+
+  Without --openssl-legacy-provider nothing plays. See PART 3.
+
+macOS IS A ZIP, NOT A DMG
+
+  A dmg can only be built on a Mac. The GitHub workflow builds on macos-latest
+  so it produces both now. Locally you get a zip.
+
+THE macOS BUILD IS UNSIGNED
+
+  Gatekeeper asks once on first launch. Right-click, Open, Open again. Proper
+  signing needs a paid Apple developer account.
+
+THE WINDOWS INSTALLER IS UNSIGNED
+
+  SmartScreen warns about an unknown publisher. More info, Run anyway. A code
+  signing certificate costs a few hundred a year.
+
+RENDER'S FREE TIER SLEEPS
+
+  15 minutes idle, then 30 to 50 seconds to wake. The service worker shows the
+  interface immediately while the server wakes. Point an uptime pinger at
+  /healthz every 10 minutes, or pay for the always-on plan.
+
+THE LEGAL POSITION
+
+  Read DISCLAIMER.md properly. Short version: Sonora reads an endpoint its
+  operator publishes for their own front end and has not opened to third
+  parties. Whether that is lawful depends on where you are. Downloading,
+  public playback and redistribution are materially riskier than private
+  listening. Disclaimers do not prevent a takedown.
+
+  If you want something with no exposure at all, port the catalogue layer to
+  Audius or Jamendo. The player, the equaliser and the rooms are all source
+  agnostic — only the dozen functions in server.js that talk to JioSaavn
+  would change.
+
+================================================================================
+
+PART 11 — QUICK REFERENCE
+
+================================================================================
+
+RUN LOCALLY
+    node start.js                       # http://localhost:3000
+
+TEST
+    npm install --no-save jsdom
+    node tests/deep.js                  # and the other six
+
+BUILD DESKTOP LOCALLY
+    cd desktop && ./build.sh            # or ./build.sh win|mac|linux
+    # needs makensis for the Windows installer:
+    #   apt install nsis   /   brew install makensis
+
+BUILD ANDROID
+    ./build-apk.sh                      # needs JDK 17 and Android SDK 34
+    # NOTE 2026-08-25: build-apk.sh now fails with a clear message — the
+    # Android Java sources are not in the repository (see CHANGES.md).
+    # apk/Sonora.apk in git is prebuilt and current.
+
+SHIP
+    # bump "version" in version.json, then:
+    git add -A && git commit -m "what changed" && git push
+    # GitHub Actions builds the installers and publishes the Release
+
+DEPLOY TO RENDER
+    New Blueprint, connect the repo, Apply. render.yaml has everything.
+    Start command: node start.js
+    Health check:  /healthz
+    Env:           NODE_VERSION=20
+
+LINKS
+    Repository   https://github.com/twgw9/sonora
+    Telegram     https://t.me/sonoramusicm
+    Update feed  https://raw.githubusercontent.com/twgw9/sonora/main/version.json
+
+================================================================================
+
+PART 12 — HONEST STATUS
+
+================================================================================
+
+WORKING AND TESTED
+
+  Everything in PART 6.
+  500 concurrent requests: 500 x 200 OK in 2.7s, zero errors, 64 MB RSS.
+  Worker killed with SIGKILL mid-traffic: back in under 4 seconds.
+
+  Last full run (2026-08-25, after the v9 fixes, on the modified code):
+
+      deep       63/63
+      room       12/12
+      hunt       17/17
+      platform   60/60    (with installers present; 56/60 without)
+      release     7/7
+      perf       13/13
+      stress     18/18
+
+  The four platform failures without installers are all the same thing: no
+  installers in downloads/ and no GitHub Release, so the download page can
+  only advertise Android and three "does this link resolve" checks have
+  nothing to resolve. The test is correct and the app is correct; the
+  directory and the Release were empty. With the installers present it is
+  60/60. The release workflow (now committed, see PART 5 bug 37) is what
+  keeps the installers on GitHub instead of on whatever machine happened to
+  build them.
+
+KNOWN GAPS
+
+  - downloads are saved to the device but not playable inside the app offline
+  - the Android Java source is not in the repository (prebuilt APK only —
+    still installable and current; rebuilding needs the source restored)
+  - rooms are disabled in the Android build (they need a shared server)
+  - the macOS and Windows builds are unsigned
+  - no server-side backup of a user's library
+  - lyrics coverage is thin for regional and very new releases
+
+THE ONE THING TO DO FIRST
+
+  Push these fixes (release.sh "v9: release workflow restored, repo cleaned").
+  GitHub Actions will build and publish SonoraSetup.exe and the rest as
+  release v9, and the Get the App page will finally offer every platform.
+  Until that happens the Get the App page can only ever offer Android, and
+  that has been the single most persistent complaint about this project.
+
+================================================================================
+
+end
+================================================================================

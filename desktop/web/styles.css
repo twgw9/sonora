@@ -1259,3 +1259,188 @@ body[data-t="paper"].glass{--gl-bd:color-mix(in srgb,#000 9%,transparent)}
 .gsX:hover{background:var(--el2);color:var(--tx)}
 .gsX:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 @media(max-width:600px){ .gsAll{display:none} }
+
+/* ============================================================
+   v10 — glass widget, notice chip, perf nudge
+   ============================================================ */
+
+/* toast-with-a-button */
+.notice2{position:fixed;left:50%;bottom:calc(64px + env(safe-area-inset-bottom));transform:translate(-50%,14px);z-index:70;display:flex;align-items:center;gap:10px;max-width:min(92vw,430px);padding:10px 12px 10px 15px;border-radius:14px;border:1px solid var(--bd);background:var(--el2);color:var(--tx);box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s}
+.notice2.show{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.notice2 span{font-size:13px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notice2 .nbtn{flex:0 0 auto;border:0;background:var(--ac);color:var(--acd);font-weight:700;font-size:12.5px;padding:8px 13px;border-radius:10px;cursor:pointer}
+.notice2 .nbtn:active{transform:scale(.96)}
+
+/* ---- glass widget: frosted now-playing chrome, opt-in ---- */
+body.glw .mnb,body.glw .pbar{
+  backdrop-filter:blur(18px) saturate(1.5);
+  -webkit-backdrop-filter:blur(18px) saturate(1.5);
+  background:color-mix(in srgb,var(--el) 56%,transparent);
+  border-color:color-mix(in srgb,#fff 16%,transparent);
+}
+@media (min-width:700px){
+  body.glw .pbar{margin:0 14px 14px;border-radius:18px;border:1px solid color-mix(in srgb,#fff 14%,transparent);box-shadow:0 14px 44px rgba(0,0,0,.4)}
+}
+@media (max-width:699px){
+  body.glw .mnb{margin:0 8px 8px;border-radius:16px;border:1px solid color-mix(in srgb,#fff 14%,transparent);box-shadow:0 10px 34px rgba(0,0,0,.42)}
+}
+body.glw .tabbar,.glw .bar{ /* keep the top/bottom bars readable under blur */
+  backdrop-filter:blur(14px) saturate(1.4);
+  -webkit-backdrop-filter:blur(14px) saturate(1.4);
+}
+/* the home now-playing card in glass style */
+.wcard.glwc{
+  background:color-mix(in srgb,var(--el) 55%,transparent);
+  border-color:color-mix(in srgb,#fff 15%,transparent);
+  backdrop-filter:blur(18px) saturate(1.5);
+  -webkit-backdrop-filter:blur(18px) saturate(1.5);
+  box-shadow:0 12px 36px rgba(0,0,0,.35);
+}
+.wcard.glwc .wbtn{background:rgba(255,255,255,.12);border-color:color-mix(in srgb,#fff 16%,transparent)}
+/* cheaper blur on small screens — the phone GPU has less to give */
+@media (max-width:640px){
+  body.glw .mnb,body.glass .mnb,body.glass .sheet,body.glass .bar{backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3)}
+}
+
+/* long lists: let the browser skip layout for rails off screen */
+.rail{content-visibility:auto;contain-intrinsic-size:auto 190px}
+.grid .cd,.rail .cd{contain:layout paint}
+
+/* phones: card quick actions fully visible, no hover needed */
+@media (hover:none){ .cact{opacity:1} }
+
+/* ============================================================
+   v11 — UI polish + karaoke lyrics
+   ============================================================ */
+
+/* ---------- karaoke: the exact word being sung is lit ---------- */
+.lyrline .w{display:inline-block;padding:0 .6px;border-radius:6px;transition:color .13s ease,opacity .13s ease,transform .13s var(--ease),text-shadow .13s}
+.lyrline .w.sung{color:color-mix(in srgb,var(--ac) 58%,var(--tx))}
+.lyrline .w.won{color:#fff;transform:scale(1.11) translateY(-1px);text-shadow:0 0 16px color-mix(in srgb,var(--ac) 85%,transparent)}
+body[data-t="paper"] .lyrline .w.won{color:var(--bg2)}
+body[data-t="paper"] .lyrline.cur{background:color-mix(in srgb,var(--ac) 14%,transparent)}
+.lyrline.cur{background:linear-gradient(180deg,color-mix(in srgb,var(--ac) 15%,transparent),color-mix(in srgb,var(--ac) 5%,transparent));border:1px solid color-mix(in srgb,var(--ac) 24%,transparent);box-shadow:0 8px 26px -10px color-mix(in srgb,var(--ac) 50%,transparent)}
+.lyrwrap{padding:4px 6px}
+#lyrBox{scrollbar-width:thin}
+
+/* ---------- ambient aurora: static on phones, slow drift on desktop ---------- */
+body::before{content:'';position:fixed;inset:-14%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(46rem 30rem at 10% -8%, color-mix(in srgb,var(--ac) 17%,transparent), transparent 68%),
+    radial-gradient(52rem 38rem at 106% 16%, color-mix(in srgb,var(--ac2) 12%,transparent), transparent 70%),
+    radial-gradient(70rem 52rem at 52% 122%, color-mix(in srgb,var(--ac) 13%,transparent), transparent 70%)}
+@media (min-width:1000px) and (prefers-reduced-motion:no-preference){
+  body::before{animation:aur 32s ease-in-out infinite alternate}
+}
+@keyframes aur{from{transform:translate3d(-1.4%,-1%,0)}to{transform:translate3d(1.6%,1.6%,0)}}
+
+/* ---------- hero ---------- */
+.hero{border-radius:26px;box-shadow:0 20px 54px -26px rgba(0,0,0,.55);border-color:color-mix(in srgb,#fff 9%,var(--line))}
+.hero::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(120deg,transparent 30%,color-mix(in srgb,#fff 7%,transparent) 50%,transparent 68%);
+  transform:translateX(-60%);transition:transform .9s var(--ease)}
+.hero:hover::after{transform:translateX(60%)}
+.hero h1{letter-spacing:-.02em}
+.hero .kicker{display:inline-flex;align-items:center;gap:7px}
+
+/* ---------- cards ---------- */
+.cd{border-radius:16px;padding:7px;transition:transform .22s var(--ease)}
+.cd .th{border-radius:13px;overflow:hidden;transition:box-shadow .25s var(--ease)}
+.cd .th img{transition:transform .35s var(--ease)}
+.cd:hover .th img{transform:scale(1.05)}
+.cd:hover{transform:translateY(-3px)}
+.cd:active{transform:translateY(-1px) scale(.99)}
+.cd .meta2 h4{font-weight:700;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cd .meta2 p{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (hover:none){
+  .cd .pf{opacity:1;transform:none}
+  .cd:hover{transform:none}
+}
+
+/* ---------- rows ---------- */
+.rw{border:1px solid transparent;transition:background .16s,box-shadow .16s,border-color .16s,transform .12s var(--sp)}
+.rw:hover{background:var(--el2);border-color:color-mix(in srgb,var(--ac) 26%,var(--line));box-shadow:inset 3px 0 0 var(--ac)}
+.rw:active{transform:scale(.995)}
+.rw .ra{border-radius:10px;box-shadow:0 3px 10px -3px rgba(0,0,0,.5)}
+.rw .rt{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rw .mi{transition:transform .14s var(--sp),color .14s,background .14s}
+
+/* ---------- controls: press feedback everywhere ---------- */
+.chip:active,.sbtn:active,.wb:active,.db:active,.step4:active,.tile:active{transform:scale(.965)}
+.chip:hover{border-color:color-mix(in srgb,var(--ac) 45%,var(--line));color:var(--tx)}
+.sbtn:active,.wbtn:active,.mbt:active,.pb:active,.ca:active,.mpl:active{transform:scale(.92)}
+button:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:8px}
+.wbtn:hover{background:color-mix(in srgb,var(--ac) 22%,transparent);color:var(--ac)}
+
+/* ---------- progress bars: gradient fill + glowing head ---------- */
+#fl,#fl2,#mPrg,#bf{background:var(--grad)}
+#hdl,#hd2{box-shadow:0 0 0 3px color-mix(in srgb,var(--bg) 70%,transparent),0 0 14px color-mix(in srgb,var(--ac) 65%,transparent)}
+#bf{opacity:.55}
+
+/* ---------- full screen player ---------- */
+.fsart{filter:drop-shadow(0 26px 60px color-mix(in srgb,var(--ac) 26%,transparent))}
+#fs .tb{border:1px solid transparent}
+#fs .tb.on{background:color-mix(in srgb,var(--ac) 16%,transparent);color:var(--ac)}
+#fs .tb:active{transform:scale(.94)}
+
+/* ---------- sheets & panels: softer corners, deeper shadow ---------- */
+.pan{border-radius:22px;box-shadow:0 26px 80px -32px rgba(0,0,0,.7)}
+.sheet{border-radius:22px 22px 0 0;border-top:1px solid color-mix(in srgb,#fff 15%,transparent)}
+.mnb,.pbar{box-shadow:0 -14px 40px -22px rgba(0,0,0,.55)}
+.mnb{border-top:1px solid color-mix(in srgb,#fff 8%,var(--line))}
+
+/* ---------- tab bar: glow on the active tab ---------- */
+.tabbar button.on svg{filter:drop-shadow(0 0 9px color-mix(in srgb,var(--ac) 55%,transparent))}
+
+/* ---------- widgets ---------- */
+.wcard{transition:transform .22s var(--ease),box-shadow .22s var(--ease)}
+.wcard:hover{transform:translateY(-2px);box-shadow:0 16px 40px -18px rgba(0,0,0,.55)}
+.wboard{padding-bottom:6px}
+
+/* ---------- scrollbars & selection ---------- */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mut) 32%,transparent);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--mut) 55%,transparent)}
+::-webkit-scrollbar-track{background:transparent}
+::selection{background:color-mix(in srgb,var(--ac) 75%,transparent);color:var(--acd)}
+
+/* ============================================================
+   v11b — collection hero (album / playlist page)
+   ============================================================ */
+.chero{display:flex;gap:24px;align-items:flex-end;margin:4px 0 6px;flex-wrap:wrap}
+.chero .chart{flex:0 0 clamp(150px,26vw,224px);aspect-ratio:1;border-radius:18px;overflow:hidden;position:relative;
+  background:var(--el2);box-shadow:0 26px 60px -22px rgba(0,0,0,.72),0 0 0 1px color-mix(in srgb,#fff 9%,transparent)}
+.chero .chart img{width:100%;height:100%;object-fit:cover;display:block}
+.chero .cmeta{min-width:0;flex:1 1 300px;display:flex;flex-direction:column;gap:9px}
+.chero .ckick{font-size:10.5px;font-weight:820;letter-spacing:.24em;text-transform:uppercase;color:var(--ac);
+  text-shadow:0 0 18px color-mix(in srgb,var(--ac) 45%,transparent)}
+.chero h1{font-size:clamp(22px,3.6vw,36px);line-height:1.1;letter-spacing:-.02em;margin:0;font-weight:800;overflow-wrap:anywhere}
+.chero .csub{color:var(--mut);font-size:13px;line-height:1.5}
+.chero .cbtns{display:flex;gap:9px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.cplay{display:inline-flex;align-items:center;gap:9px;border:0;background:var(--grad);color:var(--acd);
+  font-weight:800;font-size:14.5px;padding:11px 24px;border-radius:999px;cursor:pointer;
+  box-shadow:var(--glow);transition:transform .14s var(--sp),box-shadow .22s,filter .2s}
+.cplay svg{width:16px;height:16px;fill:currentColor}
+.cplay:hover{transform:scale(1.04);filter:brightness(1.06)}
+.cshuf{display:inline-flex;align-items:center;gap:9px;background:var(--el2);border:1px solid var(--line);
+  color:var(--tx);font-weight:700;font-size:14px;padding:11px 20px;border-radius:999px;cursor:pointer;
+  transition:transform .14s var(--sp),border-color .18s,background .18s}
+.cshuf svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cshuf:hover{border-color:color-mix(in srgb,var(--ac) 44%,var(--line));background:var(--el)}
+.cico{width:41px;height:41px;border-radius:50%;display:grid;place-items:center;background:var(--el2);
+  border:1px solid var(--line);color:var(--tx);cursor:pointer;transition:transform .14s var(--sp),border-color .18s,color .18s}
+.cico svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.cico:hover{border-color:color-mix(in srgb,var(--ac) 48%,var(--line));color:var(--ac)}
+.cplay:active,.cshuf:active{transform:scale(.95)}
+.cico:active{transform:scale(.88)}
+/* clean track rows under the hero: one title only, actions on the right */
+.rows{margin-top:2px}
+@media (max-width:640px){
+  .chero{gap:14px;align-items:center;margin-top:2px}
+  .chero .chart{flex:0 0 122px;border-radius:14px}
+  .chero h1{font-size:20.5px}
+  .chero .ckick{font-size:9.5px}
+  .chero .csub{font-size:12px}
+  .chero .cbtns{width:100%;margin-top:6px}
+  .cplay{flex:1 1 auto}
+}

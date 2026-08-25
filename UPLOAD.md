@@ -3,6 +3,15 @@
 The short version: push the source, attach the installers to a release, and
 every copy updates itself from then on.
 
+> **Automated path (preferred, since v9).** The repository now contains
+> `.github/workflows/release.yml` — GitHub Actions. Just push a changed
+> `version.json` (that is what `./release.sh "message"` does) and the
+> workflow builds the Windows installer, the macOS dmg + zip and the Linux
+> AppImage + deb on GitHub's own runners, then publishes everything
+> together with `apk/Sonora.apk` as a release tagged `vN`. No manual
+> uploads, no `publish.sh`, nothing to remember. The steps below remain as
+> the manual fallback if you ever want to do it by hand.
+
 ---
 
 ## Why there are three zips
