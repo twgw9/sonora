@@ -1444,3 +1444,26 @@ button:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radiu
   .chero .cbtns{width:100%;margin-top:6px}
   .cplay{flex:1 1 auto}
 }
+
+/* ============================================================
+   v12 — phone-tuned polish + logo
+   ============================================================ */
+/* the brand mark sits on a gradient square — crisp on every device */
+.brand .mk{border-radius:10px;overflow:hidden;box-shadow:0 6px 18px -6px color-mix(in srgb,var(--ac) 55%,transparent)}
+.brand .mk svg{width:100%;height:100%}
+/* tighter hero on small screens, less vertical waste */
+@media (max-width:640px){
+  .hero{padding:22px 18px 18px;border-radius:20px}
+  .hero h1{font-size:26px}
+  .hero p{font-size:13px}
+  .hact{gap:7px;flex-wrap:wrap}
+  .hb{font-size:12.5px;padding:9px 12px}
+  .brand{font-size:18px;gap:9px;padding-bottom:16px}
+  .brand .mk{width:30px;height:30px;flex-basis:30px;border-radius:9px}
+  .cap{font-size:10px}
+  .nav{padding:8.5px 10px;font-size:12.5px}
+  .wrap{padding:14px 14px 26px}
+}
+/* smooth scrolling and no tap highlight on Android WebView */
+html{-webkit-tap-highlight-color:transparent}
+:where(button,a,.rw,.cd){touch-action:manipulation}

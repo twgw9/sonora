@@ -7,7 +7,7 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v37-2026-08-25';
+const BUILD = 'v38-2026-08-25';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -885,6 +885,22 @@ function addToPl(s) {
       S.pls.push({ id: Date.now(), name: n, songs: [s] }); save(); closeM(); toast('Created ' + n); };
   });
 }
+/* Save a whole collection (album / playlist hero) into a playlist. */
+const saveAllPl = (songs, defName) => {
+  if (!songs || !songs.length) return toast('Nothing to save');
+  modal(`<h3>Save all ${songs.length} tracks</h3>
+    <div class="sb2">Copies the whole collection into a playlist on this device. Songs stay in sync with the original: nothing is uploaded.</div>
+    <div class="dlr" style="flex-direction:column;align-items:stretch">
+    ${S.pls.map((p, i) => `<button class="db" data-i="${i}" style="text-align:left">${esc(p.name)} <span style="opacity:.5">· ${p.songs.length}</span></button>`).join('') || '<span class="sb2">No playlists yet — create one below.</span>'}</div>
+    <input class="inp" id="pn" placeholder="New playlist name" value="${esc(defName || '')}" style="margin-top:8px"><button class="wb pri" id="pg" style="margin-top:8px">Create and add</button>`, m => {
+    m.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { const p = S.pls[+b.dataset.i];
+      const add = songs.filter(s => !p.songs.some(y => y.id === s.id));
+      if (!add.length) return toast('Everything is already in ' + p.name);
+      p.songs.push(...add); save(); closeM(); toast(add.length + ' tracks added to ' + p.name); });
+    $('#pg').onclick = () => { const n = $('#pn').value.trim(); if (!n) return toast('Enter a name');
+      S.pls.push({ id: Date.now(), name: n, songs: songs.slice() }); save(); closeM(); toast('Created ' + n + ' — ' + songs.length + ' tracks'); };
+  });
+};
 
 /* ================= HOME WIDGETS =================
    Four cards that can sit at the top of the home page. They are off by
@@ -2286,6 +2302,7 @@ async function collPage(x) {
           <button class="cshuf" id="cShuf"><svg viewBox="0 0 24 24"><path d="M3 6.5h3.1c1.4 0 2.7.7 3.5 1.8l4.8 7.4c.8 1.1 2.1 1.8 3.5 1.8H21"/><path d="M17.3 4.6 20.8 7.5l-3.5 2.9"/><path d="M17.3 13.6l3.5 2.9-3.5 2.9"/><path d="M3 17.5h3.1c1.4 0 2.7-.7 3.5-1.8l1.1-1.7"/><path d="M13.3 10l1.1-1.7c.8-1.1 2.1-1.8 3.5-1.8H21"/></svg><span>Shuffle</span></button>
           <button class="cico" id="cRadio" title="Start radio" aria-label="Start radio">${I.radio}</button>
           <button class="cico" id="cQueue" title="Queue all" aria-label="Queue all">${I.queue}</button>
+          <button class="cico" id="cSave" title="Save all to a playlist" aria-label="Save all to a playlist">${I.plus}</button>
         </div>
       </div>`;
     v.appendChild(hero);
@@ -2295,6 +2312,7 @@ async function collPage(x) {
     $('#cShuf').onclick = () => { S.shuffle = true; play([...songs].sort(() => Math.random() - .5), 0); const sh = $('#shuf'); if (sh) sh.classList.add('on'); };
     $('#cRadio').onclick = () => startRadio(songs[0]);
     $('#cQueue').onclick = () => { S.queue = songs; S.idx = -1; counts(); toast(label + ' queued'); };
+    $('#cSave').onclick = () => saveAllPl(songs, (info.t || x.t || '').slice(0, 40));
   } catch (e) {
     v.innerHTML = '';
     v.appendChild(H(x.t || '', label));
@@ -3674,7 +3692,7 @@ document.addEventListener('visibilitychange', () => {
 function initGate() {
   const done = LS('agreed', 0);
   const g = $('#gate');
-  fetch('logo.svg').then(r => r.text()).then(t => { const m = $('#gateMk'); if (m) m.innerHTML = t; }).catch(() => { });
+  /* gate logo is inlined in index.html — no fetch, never blank */
   if (done) return;
   g.classList.add('on');
   const chk = $('#gChk'), btn = $('#gGo');
@@ -3724,7 +3742,10 @@ Please note: takedown notices should generally be directed at the party that act
 }
 
 /* ================= INIT ================= */
-fetch('logo.svg').then(r => r.text()).then(t => $('#mk').innerHTML = t).catch(() => { });
+/* The logo mark is inlined in index.html so it always renders — a fetch-based
+   logo silently vanished in offline starts, sandboxed previews and older
+   WebViews, which made the brand look like plain text. */
+{ const sv = $('#sVer'); if (sv) sv.textContent = 'v' + String(BUILD.match(/\d+/) || '?')[0]; }
 setTheme(S.theme); setDens(S.dens); setAccent(S.accent); setFont(S.font); setCorner(S.corner); setGlass(S.glass); setGlassW(S.glw);
 if (LS('hc', false)) { document.body.dataset.hc = '1'; $('#swHC').classList.add('on'); }
 buildEQ(); paintPresets(); paintModes(); paintAppearance(); paintQ(); syncKnobs();

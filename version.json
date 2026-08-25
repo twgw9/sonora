@@ -1,7 +1,7 @@
 {
-  "version": 11,
+  "version": 12,
   "minApk": 1,
-  "notes": "v11: collection hero pages for albums/playlists (band art, kicker, Play/Shuffle pills, clean single-title rows), radio-station fix, karaoke word-by-word highlight, UI polish pass (aurora, card/row motion, press feedback, gradient progress, custom scrollbars), zero errors, all tests green.",
+  "notes": "v12: brand logo inlined (never blank now \u2014 was fetched via logo.svg and failed offline/in WebView), footer version syncs to interface build, collection hero gains Save-all-to-playlist, phone-tuned spacing/touch targets, professional Terms of Use & Copyright Disclaimer (v2.0), release pipeline unchanged: pushing version.json builds + publishes Windows/macOS/Linux/APK automatically.",
   "date": "2026-08-25",
   "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
   "repo": "https://github.com/twgw9/sonora"

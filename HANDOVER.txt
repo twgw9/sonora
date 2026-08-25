@@ -11,8 +11,8 @@ Read it top to bottom once before touching anything.
 Project      Sonora, a music player
 Repository   https://github.com/twgw9/sonora
 Telegram     https://t.me/sonoramusicm
-Interface    v37 (app.js BUILD string)              [updated 2026-08-25]
-Payload      v11 (version.json, this is the number that drives updates)
+Interface    v38 (app.js BUILD string)              [updated 2026-08-25]
+Payload      v12 (version.json, this is the number that drives updates)
 Date         2026-08-25  (v10: see CHANGES.md)
 Licence      MIT on the code only — see LICENSE and DISCLAIMER.md
 

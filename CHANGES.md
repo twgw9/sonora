@@ -191,3 +191,23 @@ the release workflow produces them on push). No emoji in UI files.
   on every control, gradient progress bars with glowing head, softer
   sheets/panels, custom scrollbars, accent selection colour, active-tab glow,
   full-screen artwork glow.
+
+## v12 (same day) — brand, hero extras, terms (payload 12 · BUILD v38)
+- **Logo now renders everywhere.** The mark was injected by
+  `fetch('logo.svg')` — which fails silently in offline starts, sandboxed
+  previews and some WebViews, leaving the brand as bare text. It is now
+  inlined in index.html (sidebar + boot gate), so it can never be blank.
+  Footer "vN" also syncs to the live interface build.
+- **Collection hero: Save all** — the album/playlist page now has a fourth
+  round button that copies the whole collection into a new or existing
+  playlist ("add only the missing tracks" when the playlist already has
+  some).
+- **Phone tuning**: tighter hero/nav/brand spacing under 640 px, `touch-
+  action:manipulation`, transparent tap highlight in the Android WebView.
+- **Terms of Use & Copyright Disclaimer v2.0** — full legal-style document
+  (definitions, IP, permitted/prohibited use, no warranty, liability cap,
+  takedown procedure, privacy summary, third-party services, governing law,
+  contact). Publishable as-is.
+- Verified: deep 63/63, room 12/12, hunt 17/17, release 7/7, perf 13/13,
+  stress 18/18 (platform 56/60 without installers — documented; the release
+  workflow produces them on push).
