@@ -1,7 +1,7 @@
 {
-  "version": 12,
+  "version": 13,
   "minApk": 1,
-  "notes": "v12: brand logo inlined (never blank now \u2014 was fetched via logo.svg and failed offline/in WebView), footer version syncs to interface build, collection hero gains Save-all-to-playlist, phone-tuned spacing/touch targets, professional Terms of Use & Copyright Disclaimer (v2.0), release pipeline unchanged: pushing version.json builds + publishes Windows/macOS/Linux/APK automatically.",
+  "notes": "v13: App Look \u2014 six switchable skins (Classic, Aurora, Liquid Glass, Neon, Poster, Soft Light) restyle the whole app in one tap with every feature intact; player styles Card/Orbit/Wave/Karaoke; one-tap playlist add with Undo plus a searchable picker; shareable playlist links that import on open; offline playback \u2014 downloaded tracks keep playing with no server and no network; two more music mirrors with parallel racing and a live source-health readout; tablet layout tuned.",
   "date": "2026-08-25",
   "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
   "repo": "https://github.com/twgw9/sonora"

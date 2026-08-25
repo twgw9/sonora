@@ -33,6 +33,8 @@ const MIRRORS = [
   'https://jiosaavan-api-2-harsh-patel.vercel.app',
   'https://saavn.dev/api',
   'https://jiosaavn-api-privatecvc2.vercel.app',
+  'https://jiosaavn-api-codyandersan.vercel.app',
+  'https://jio-saavn-api-sigma.vercel.app',
 ];
 
 /* ---------------- download counter ---------------- */
@@ -137,6 +139,29 @@ async function mirror(pathQ) {
     catch (e) { brkFail(h); }
   }
   return null;
+}
+/* Race the first two healthy mirrors in parallel and take whichever answers
+   first. Sequential fallback means a dead mirror costs its whole timeout
+   before the next one is even tried; racing turns worst case into best case.
+   Used on the hot search path where latency is what users feel. */
+async function mirrorRace(pathQ) {
+  const up = MIRRORS.filter(brkOk).slice(0, 2);
+  if (!up.length) return mirror(pathQ);
+  if (up.length === 1) return mirror(pathQ);
+  return new Promise(resolve => {
+    let pending = up.length, done = false;
+    up.forEach(h => jget(h + pathQ, { timeout: 8000, tries: 0 })
+      .then(j => { brkPass(h); if (!done) { done = true; resolve(j.data ?? j.results ?? j); } })
+      .catch(() => { brkFail(h); if (--pending === 0 && !done) { done = true; resolve(null); } }));
+  });
+}
+/* Which upstreams are alive right now — the Settings page shows this so
+   anyone can see the app has more than one place to get music from. */
+async function sourceHealth() {
+  const now = Date.now();
+  const rows = [{ name: 'JioSaavn direct', kind: 'primary', ok: brkOk('saavn') }];
+  MIRRORS.forEach((h, i) => rows.push({ name: 'Mirror ' + (i + 1), host: new URL(h).hostname, kind: 'backup', ok: brkOk(h) }));
+  return { at: now, sources: rows, note: 'A tripped source is skipped for 45 seconds, then tried again.' };
 }
 const mSong = s => s && ({
   id: s.id, t: dec(s.name || s.title), a: dec(s.artists?.primary?.map(x => x.name).join(', ') || s.primaryArtists || ''),
@@ -477,10 +502,12 @@ R['/api/search'] = async q => {
     if (songs.length) return { total: d.total || songs.length, songs };
     throw new Error('empty');
   } catch (e) {
-    const m = await mirror(`/search/songs?query=${encodeURIComponent(s)}&limit=${n}`);
-    return { songs: uniq(((m?.results) || []).map(mSong).filter(Boolean)), backup: true };
+    const m = await mirrorRace(`/search/songs?query=${encodeURIComponent(s)}&limit=${n}`);
+    return { songs: uniq(((m?.results || m?.data?.results) || []).map(mSong).filter(Boolean)), backup: true };
   }
 };
+
+R['/api/sources'] = async () => sourceHealth();
 
 R['/api/searchall'] = async q => {
   const s = String(q.get('q') || '').trim().slice(0, 120); if (!s) return {};

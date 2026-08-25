@@ -1,3 +1,36 @@
+# v13 — App Look, offline play, easy playlists (2026-08-25)
+
+## New
+- **App Look (UI switcher)** — Settings > Appearance > App Look. Six skins:
+  Classic (the app as it always was), Aurora (glass player over a dark base),
+  Liquid Glass (glossy translucent panels, iOS-26 style), Neon (pure black,
+  electric accents), Poster (bigger artwork, warm editorial tone) and
+  Soft Light (airy daytime look, auto-pairs with the Paper theme).
+  One tap restyles the whole app; every feature works in every look.
+- **Player styles** — Card / Orbit / Wave / Karaoke. Orbit rings the artwork
+  with a draggable progress circle; Wave seeks on a waveform; Karaoke puts
+  word-synced lyrics front and centre. Works with any skin.
+- **One-tap playlist add** — the + button drops the song into your most
+  recent playlist instantly, with Undo. The full picker (searchable, shows
+  covers, creates on Enter) opens from the 3-dot menu or on first use.
+- **Shareable playlists** — Share button on every playlist builds a link
+  that carries the whole list; opening it imports a copy on any device.
+  No account, no server storage.
+- **Offline playback** — every download also saves a copy inside the app;
+  when the server or the network is gone the saved copy plays automatically.
+- **Multi-source upgrades** — two more catalogue mirrors (six sources
+  total), parallel racing on the search path, and a live "Music sources"
+  health readout on the Get-the-app page.
+- **Tablet layout** — proper mid-size grid between phone and desktop.
+
+## Fixed
+- Playlist rename and shuffle buttons on the playlist page.
+- Player-style switch no longer references a stale element.
+
+## Tests
+- New suite tests/looks.js: 41 checks across skins, player styles,
+  quick add, share links, offline store and settings. All suites: 171/171.
+
 # What v9 changed (2026-08-25)
 
 A maintenance release that shuts the gaps between what the handover said and

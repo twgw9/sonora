@@ -1,0 +1,48 @@
+SONORA v13 — GITHUB PE KAISE DALE (aasan tarika)
+=================================================
+
+Sirf 5 FILES BADLI HAIN is baar. Poora zip mat chadhao — bas ye 5:
+
+  1. app.js         (sabse bada change — App Look, players, playlist, offline)
+  2. styles.css     (skins ka CSS + tablet layout)
+  3. server.js      (2 naye mirrors + racing + /api/sources)
+  4. sw.js          (cache version v39)
+  5. version.json   (version 13 — YE SABSE LAST ME DALNA)
+
+  + CHANGES.md      (optional — changelog, daal do toh accha)
+  + tests/looks.js  (optional — naya test file)
+
+STEPS (website se):
+-------------------
+1. github.com/twgw9/sonora kholo
+2. Har file ke liye: file pe click > pencil (Edit) > sab select karke delete
+   > naye wale ka content paste (sonora-v13.zip me se) > Commit changes
+3. tests/looks.js NAYI file hai: tests folder kholo > Add file >
+   Create new file > naam "looks.js" > content paste > Commit
+
+*** version.json SABSE AAKHRI ME commit karna! ***
+Kyunki version.json push hote hi "Build and Release" workflow chal jaati
+hai — baaki files pehle pahunchi honi chahiye.
+
+version.json commit hote hi:
+  - Actions me "Build and Release" apne aap chalegi
+  - 15-25 min me Release v13 ban jayegi (Windows exe + mac + linux + apk)
+  - Sab installed apps ko 6 ghante ke andar "Update v13 available" dikhega
+  - APK/website/desktop sab OTA se naya interface le lenge
+
+NAYA KYA HAI v13 ME (users ko batane ke liye):
+----------------------------------------------
+- App Look: 6 style — Classic, Aurora, Liquid Glass, Neon, Poster, Soft Light
+  (Settings > Appearance > App Look — ek tap me poora app naya)
+- Player styles: Card / Orbit (gol ring) / Wave (waveform) / Karaoke
+- Playlist me + dabao = seedha add (Undo ke sath). Full picker 3-dot se.
+- Playlist Share — link bhejo, doosre ke phone me poori playlist copy
+- Offline: download kiya gaana server/net band hone par bhi bajega
+- 6 music sources — ek down toh doosra, har song aata hai
+- Tablet ke liye alag layout
+
+AGAR PICHLI BAAR KA release.yml FIX ABHI TAK NAHI DALA:
+--------------------------------------------------------
+.github/workflows/release.yml ko github-fix/release.yml wale content se
+replace karo (workspace me rakha hai) — warna linux/mac jobs phir fail
+hongi. Windows phir bhi banega.

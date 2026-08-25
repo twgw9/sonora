@@ -7,7 +7,7 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v38-2026-08-25';
+const BUILD = 'v39-2026-08-25';
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -171,6 +171,15 @@ const S = {
   eqPre: LS('eqPre', 'flat'),
   rain: false, kar: false, cmp: LS('cmp', false), fade: true, spin: LS('spin', true),
   theme: LS('theme','venom'), dens: LS('dens','default'), accent: LS('accent','default'), font: LS('font','grotesk'), corner: LS('corner','default'),
+  /* App Look: a skin restyles the whole interface in one tap. Classic is the
+     original look; every feature works identically under every skin. */
+  skin: LS('skin', 'classic'),
+  /* Player style: how the full-screen player draws itself. */
+  pSty: LS('pSty', 'card'),
+  /* Last playlist a track was added to — powers one-tap Quick add. */
+  lastPl: LS('lastPl', -1),
+  /* Song ids saved for offline playback (id -> quality). */
+  offIds: LS('offIds', {}),
   room: LS('room', null), es: null, host: LS('rhost', false), snap: null, me: LS('me', 'Guest' + Math.floor(Math.random() * 900 + 100)),
   tmr: null, tmrEnd: 0, fsTab: 'art',
   // The home dashboard cards are off unless asked for. They pushed the actual
@@ -610,6 +619,39 @@ function setQ(v) {
   toast('Quality: ' + (QUAL.find(x => x.v === v) || {}).n);
 }
 
+/* ================= OFFLINE STORE =================
+   Downloaded tracks also land in the browser's Cache Storage under their
+   song id. When the server (or the whole network) is gone, playback falls
+   back to these copies — the music keeps going. Zero dependencies: it is
+   the same Cache API the service worker already uses. */
+const OFF = {
+  name: 'sonora-tracks',
+  key: id => '/offline-track/' + encodeURIComponent(id),
+  async save(s, q) {
+    try {
+      const c = await caches.open(this.name);
+      const r = await fetch(surl(s, q));
+      if (!r.ok) return false;
+      await c.put(this.key(s.id), r);
+      S.offIds[s.id] = q; SET('offIds', S.offIds);
+      return true;
+    } catch (e) { return false; }
+  },
+  async url(id) {
+    try {
+      const c = await caches.open(this.name);
+      const r = await c.match(this.key(id));
+      if (!r) return '';
+      return URL.createObjectURL(await r.blob());
+    } catch (e) { return ''; }
+  },
+  async drop(id) {
+    try { const c = await caches.open(this.name); await c.delete(this.key(id)); } catch (e) { }
+    delete S.offIds[id]; SET('offIds', S.offIds);
+  },
+  has(id) { return !!S.offIds[id]; }
+};
+
 /* ================= PLAYBACK ================= */
 function surl(s, q) {
   const want = q || S.q, u = s.u || {};
@@ -626,7 +668,15 @@ async function play(list, i) {
   if (list) { S.queue = list.slice(0, 400); S.idx = i; }
   const s = S.queue[S.idx]; if (!s) return;
   if (!s.u || !Object.keys(s.u).length) { try { const d = await api('/api/song?id=' + s.id); if (d.song) Object.assign(s, d.song); } catch (e) { } }
-  const url = surl(s); if (!url) { toast('Track unavailable'); return skip(true); }
+  /* Offline first when the network is gone: a saved copy plays even when
+     the server naps or the phone has no signal. Online, the stream stays
+     primary so quality switching keeps working. */
+  let url = surl(s);
+  if (OFF.has(s.id) && (!navigator.onLine || !url)) {
+    const ou = await OFF.url(s.id);
+    if (ou) url = ou;
+  }
+  if (!url) { toast('Track unavailable'); return skip(true); }
   wake(); au.src = url;
   const v = clamp($('#vol').value / 100, 0, 1); setVol(S.fade ? 0 : v);
   /* One retry: WebViews sometimes reject the very first play() with a
@@ -766,6 +816,10 @@ async function download(s, q) {
   document.body.appendChild(a); a.click(); a.remove();
   toast(`Downloading at ${q} kbps`);
   S.dls = [{ ...s, dq: q, at: Date.now() }, ...S.dls.filter(x => x.id !== s.id)]; save();
+  /* Also stash a copy for offline playback inside the app — the file above
+     goes to the Downloads folder, this one keeps the player itself working
+     with no server and no network. */
+  OFF.save(s, q).then(ok => { if (ok) toast('Saved for offline play too'); });
 }
 async function dlSheet(s) {
   if (!s.u || !Object.keys(s.u).length) { try { const d = await api('/api/song?id=' + s.id); Object.assign(s, d.song || {}); } catch (e) { } }
@@ -873,17 +927,90 @@ function addManyToPl(list, label) {
   });
 }
 
-function addToPl(s) {
-  modal(`<h3>Add to playlist</h3><div class="sb2">${esc(s.t)}</div>
-    <div class="dlr" style="flex-direction:column;align-items:stretch">
-    ${S.pls.map((p, i) => `<button class="db" data-i="${i}" style="text-align:left">${esc(p.name)} <span style="opacity:.5">· ${p.songs.length}</span></button>`).join('') || '<span class="sb2">No playlists yet.</span>'}</div>
-    <input class="inp" id="pn" placeholder="New playlist name"><button class="wb pri" id="pg">Create and add</button>`, m => {
-    m.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { const p = S.pls[+b.dataset.i];
-      if (p.songs.some(x => x.id === s.id)) return toast('Already in that playlist');
-      p.songs.push(s); save(); closeM(); toast('Added to ' + p.name); });
-    $('#pg').onclick = () => { const n = $('#pn').value.trim(); if (!n) return toast('Enter a name');
-      S.pls.push({ id: Date.now(), name: n, songs: [s] }); save(); closeM(); toast('Created ' + n); };
+/* Put a track into a playlist by index, with the shared bookkeeping:
+   duplicate check, remember-last, undo toast. */
+function plAdd(s, i) {
+  const p = S.pls[i]; if (!p) return;
+  if (p.songs.some(x => x.id === s.id)) return toast('Already in ' + p.name);
+  p.songs.push(s); S.lastPl = i; SET('lastPl', i); save();
+  notice('Added to ' + p.name, 'Undo', () => {
+    const j = p.songs.findIndex(x => x.id === s.id);
+    if (j >= 0) { p.songs.splice(j, 1); save(); toast('Removed'); }
   });
+}
+/* One-tap add: if a playlist was used before, drop the song straight in and
+   offer Undo — no sheet, no hunting. Long-press / the picker still gives the
+   full list. */
+function quickAdd(s) {
+  if (S.lastPl >= 0 && S.pls[S.lastPl]) return plAdd(s, S.lastPl);
+  addToPl(s);
+}
+function addToPl(s) {
+  const last = S.lastPl >= 0 && S.pls[S.lastPl] ? S.lastPl : -1;
+  modal(`<h3>Add to playlist</h3><div class="sb2">${esc(s.t)} — ${esc(s.a)}</div>
+    <input class="inp" id="plq" placeholder="Search or type a new name…" style="margin-bottom:8px">
+    <div class="dlr plpick sc" id="plList" style="flex-direction:column;align-items:stretch">
+    ${S.pls.map((p, i) => `<button class="db plrow${i === last ? ' rec' : ''}" data-i="${i}" data-n="${esc(p.name).toLowerCase()}">
+      <span class="plr-ic">${p.songs[0] && p.songs[0].img ? `<img src="${imgAt(p.songs[0].img, 50)}" alt="">` : I.music}</span>
+      <span class="plr-t">${esc(p.name)}${i === last ? ' <em>· recent</em>' : ''}<small>${p.songs.length} ${p.songs.length === 1 ? 'track' : 'tracks'}${p.songs.some(x => x.id === s.id) ? ' · already added' : ''}</small></span>
+      <span class="plr-add">${p.songs.some(x => x.id === s.id) ? '✓' : '+'}</span></button>`).join('') || '<span class="sb2">No playlists yet — type a name above and create one.</span>'}</div>
+    <button class="wb pri" id="pg">Create new playlist</button>`, m => {
+    const q = m.querySelector('#plq'), listEl = m.querySelector('#plList'), pg = m.querySelector('#pg');
+    const filter = () => { const v = q.value.trim().toLowerCase();
+      let vis = 0;
+      listEl.querySelectorAll('.plrow').forEach(b => { const hit = !v || b.dataset.n.includes(v); b.style.display = hit ? '' : 'none'; if (hit) vis++; });
+      pg.textContent = q.value.trim() ? `Create "${q.value.trim()}" and add` : 'Create new playlist'; };
+    q.oninput = filter;
+    q.onkeydown = e => { if (e.key === 'Enter' && q.value.trim()) pg.click(); };
+    m.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { closeM(); plAdd(s, +b.dataset.i); });
+    pg.onclick = () => { const n = q.value.trim() || 'My playlist';
+      S.pls.push({ id: Date.now(), name: n, songs: [s] });
+      S.lastPl = S.pls.length - 1; SET('lastPl', S.lastPl); save(); closeM(); toast('Created ' + n); };
+  });
+}
+/* ---- shareable playlists ----
+   The whole playlist rides inside the link itself (name + song ids,
+   base64url in the #pl= fragment) so sharing needs no account and no server
+   storage. The receiver's app looks each id up through the normal API and
+   rebuilds the playlist locally. */
+function plShareLink(p) {
+  const data = { n: p.name, ids: p.songs.map(s => s.id).slice(0, 200) };
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return location.origin + location.pathname + '#pl=' + b64;
+}
+function sharePl(p) {
+  const url = plShareLink(p);
+  modal(`<h3>Share playlist</h3><div class="sb2">${esc(p.name)} · ${p.songs.length} tracks</div>
+    <div class="sb2" style="word-break:break-all;background:var(--el);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:11px">${esc(url)}</div>
+    <button class="wb pri" id="shCp">Copy link</button>
+    ${navigator.share ? '<button class="wb" id="shNat">Share via apps</button>' : ''}
+    <div class="sb2">Anyone who opens the link gets a copy of this playlist in their own Sonora — no account needed.</div>`, m => {
+    m.querySelector('#shCp').onclick = () => { (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+      .then(() => toast('Link copied')).catch(() => { const t = el('textarea'); t.value = url; document.body.appendChild(t); t.select();
+        try { document.execCommand('copy'); toast('Link copied'); } catch (e) { toast('Copy failed — select it by hand'); } t.remove(); }); };
+    const nat = m.querySelector('#shNat');
+    if (nat) nat.onclick = () => navigator.share({ title: p.name + ' — Sonora playlist', url }).catch(() => { });
+  });
+}
+async function importSharedPl(b64) {
+  let data;
+  try { data = JSON.parse(decodeURIComponent(escape(atob(b64.replace(/-/g, '+').replace(/_/g, '/'))))); }
+  catch (e) { return toast('That playlist link is damaged'); }
+  if (!data || !Array.isArray(data.ids) || !data.ids.length) return toast('That playlist link is empty');
+  const name = String(data.n || 'Shared playlist').slice(0, 60);
+  toast('Importing "' + name + '"…');
+  const songs = [];
+  /* fetch in small batches so a 100-track playlist does not fire 100
+     simultaneous requests at the server */
+  for (let i = 0; i < data.ids.length; i += 8) {
+    const batch = data.ids.slice(i, i + 8).map(id =>
+      api('/api/song?id=' + encodeURIComponent(id)).then(d => d.song).catch(() => null));
+    (await Promise.all(batch)).forEach(s => { if (s && s.id) songs.push(s); });
+  }
+  if (!songs.length) return toast('Could not load that playlist — try again online');
+  S.pls.push({ id: Date.now(), name, songs }); save();
+  notice('"' + name + '" imported — ' + songs.length + ' tracks', 'Open', () => { nav('pls'); });
 }
 /* Save a whole collection (album / playlist hero) into a playlist. */
 const saveAllPl = (songs, defName) => {
@@ -1059,7 +1186,7 @@ function cardEl(x, cb, yr, song) {
     b.onclick = e => {
       e.stopPropagation();                       // never start playback
       e.preventDefault();
-      if (b.dataset.a === 'pl') isSong ? addToPl(x) : collToPl(x);
+      if (b.dataset.a === 'pl') isSong ? quickAdd(x) : collToPl(x);
       else isSong ? ctxMenu(e, x) : collMenu(e, x);
     };
   });
@@ -1127,7 +1254,7 @@ function rowList(list, onDel, opt) {
     r.onclick = e => { const b = e.target.closest('[data-a]');
       if (b) { e.stopPropagation(); const a = b.dataset.a;
         if (a === 'like') like(s);
-        else if (a === 'pl') addToPl(s);
+        else if (a === 'pl') quickAdd(s);
         else if (a === 'dl') dlSheet(s);
         else ctxMenu(e, s, onDel && (() => onDel(i)));
         return; }
@@ -1695,6 +1822,14 @@ function openPl(i) {
   v.appendChild(H(p.name, p.songs.length + ' tracks'));
   const b = el('div', 'chips');
   if (p.songs.length) { const a = el('button', 'chip on', 'Play all'); a.onclick = () => play(p.songs, 0); b.appendChild(a); }
+  if (p.songs.length) { const sh = el('button', 'chip', 'Share'); sh.onclick = () => sharePl(p); b.appendChild(sh); }
+  if (p.songs.length) { const sf = el('button', 'chip', 'Shuffle'); sf.onclick = () => { S.shuffle = true; $('#shuf').classList.add('on'); play([...p.songs].sort(() => Math.random() - .5), 0); }; b.appendChild(sf); }
+  const rn = el('button', 'chip', 'Rename');
+  rn.onclick = () => modal(`<h3>Rename playlist</h3><input class="inp" id="rn2" value="${esc(p.name)}"><button class="wb pri" id="rok">Save</button>`,
+    m => { const ip = m.querySelector('#rn2'); ip.select();
+      m.querySelector('#rok').onclick = () => { const n = ip.value.trim(); if (!n) return toast('Enter a name');
+        p.name = n; save(); closeM(); openPl(i); toast('Renamed'); }; });
+  b.appendChild(rn);
   const d = el('button', 'chip', 'Delete playlist');
   d.onclick = () => askConfirm('Delete this playlist?', p.name + ' has ' + p.songs.length +
     (p.songs.length === 1 ? ' track' : ' tracks') + '. The songs stay in your library.', 'Delete',
@@ -1723,6 +1858,8 @@ function vPrefs(v) {
       w.appendChild(b); }); return w; };
 
   let g = group('Appearance', 'Make it yours');
+  row(g, 'App Look', (SKINS.find(x => x[0] === S.skin) || ['', 'Classic'])[1] + ' — one tap restyles everything', btn('Choose', () => skinPicker(), 1));
+  row(g, 'Player style', 'Full-screen player layout', seg(PSTYLES, S.pSty, setPSty));
   row(g, 'Theme and accent', 'Eight themes, six accent colours', btn('Open panel', () => openPan('#thPan'), 1));
   row(g, 'Layout density', 'How much fits on screen', seg([['compact', 'Compact'], ['default', 'Default'], ['cozy', 'Cozy'], ['list', 'List']], S.dens, setDens));
   row(g, 'Corner style', 'Sharp, default or rounded', seg([['sharp', 'Sharp'], ['default', 'Default'], ['round', 'Round']], S.corner, setCorner));
@@ -1989,6 +2126,16 @@ async function vGet(v) {
     gh.innerHTML = '<div class="si2"><b>Source on GitHub</b><span>Report an issue, read the change log</span></div>';
     const ghb = el('a', 'sbtn pri', 'View repo'); ghb.href = REPO; ghb.target = '_blank'; ghb.rel = 'noopener noreferrer';
     gh.appendChild(ghb); soc.appendChild(gh);
+    /* Music sources health — proof the app never depends on one API. */
+    const sh = el('div', 'setrow tgrow');
+    sh.innerHTML = '<div class="si2"><b>Music sources</b><span>Checking…</span></div>';
+    soc.appendChild(sh);
+    api('/api/sources', { cache: false, tries: 0 }).then(d => {
+      const up = (d.sources || []).filter(x => x.ok).length, all = (d.sources || []).length;
+      const span = sh.querySelector('span'); if (!span) return;
+      span.textContent = up + ' of ' + all + ' sources online — if one fails the next answers automatically';
+      sh.querySelector('b').textContent = 'Music sources: ' + (up === all ? 'all healthy' : up + '/' + all + ' online');
+    }).catch(() => { const span = sh.querySelector('span'); if (span) span.textContent = 'Multiple sources with automatic failover'; });
     v.appendChild(soc);
   }
 
@@ -2948,18 +3095,76 @@ function fsRender() {
   FSTABS.forEach(([k, n, ic]) => { const b = el('button', 'tb' + (S.fsTab === k ? ' on' : ''), ic + n);
     b.onclick = () => { S.fsTab = k; fsRender(); }; t.appendChild(b); });
   const s = S.queue[S.idx], body = $('#fsBody'); body.innerHTML = '';
+  orbTick = null; waveTick = null;
   $('#fsTop').textContent = s ? s.t : '—';
   if (S.fsTab === 'art') {
-    const a = el('div', 'fsart' + (S.spin ? ' disc' : '') + (!au.paused ? ' go' : ''), `<img src="${s ? s.img : ''}" alt="">`);
-    body.appendChild(a);
-    const c = el('canvas'); c.id = 'viz'; c.width = 700; c.height = 96; body.appendChild(c);
-    body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a + (s.al ? ' · ' + s.al : '') + (s.y ? ' · ' + s.y : '') : '')}</p>`));
-    startViz();
+    /* Player style: Card (classic), Orbit (progress ring around round art),
+       Wave (waveform seekbar) or Karaoke (lyrics-first). Same tab, same
+       controls — only the stage changes. */
+    if (S.pSty === 'orbit') {
+      const pct = au.duration ? (au.currentTime / au.duration) * 100 : 0;
+      const o = el('div', 'orbwrap', `<div class="orb" id="orbRing">
+        <div class="orbring"></div>
+        <img src="${s ? s.img : ''}" alt="">
+      </div>`);
+      body.appendChild(o);
+      const ring = o.querySelector('.orbring');
+      const paint = p => ring.style.background = `conic-gradient(var(--ac) 0 ${p}%, color-mix(in srgb,var(--tx) 14%,transparent) ${p}% 100%)`;
+      paint(pct);
+      orbTick = () => paint(au.duration ? (au.currentTime / au.duration) * 100 : 0);
+      /* drag / tap anywhere on the ring to seek */
+      const seekAt = ev => { const r = o.querySelector('.orb').getBoundingClientRect();
+        const x = (ev.touches ? ev.touches[0] : ev).clientX - (r.left + r.width / 2);
+        const y = (ev.touches ? ev.touches[0] : ev).clientY - (r.top + r.height / 2);
+        let deg = Math.atan2(x, -y) * 180 / Math.PI; if (deg < 0) deg += 360;
+        if (au.duration) au.currentTime = (deg / 360) * au.duration; };
+      let dragging = false;
+      o.querySelector('.orb').addEventListener('pointerdown', e => { dragging = true; seekAt(e); });
+      addEventListener('pointermove', e => dragging && seekAt(e));
+      addEventListener('pointerup', () => dragging = false);
+      body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a : '')}</p>`));
+    } else if (S.pSty === 'wave') {
+      const a = el('div', 'fsart wv', `<img src="${s ? s.img : ''}" alt="">`);
+      body.appendChild(a);
+      const w = el('div', 'wavebar', ''); w.id = 'waveBar';
+      /* bars from a seeded pseudo-random walk so the same song always shows
+         the same shape — feels like a real waveform without decoding audio */
+      let seed = 0; for (const ch of (s ? String(s.id) : 'x')) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+      const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 4294967295;
+      for (let i = 0; i < 48; i++) { const b = el('i'); b.style.height = (18 + rnd() * 82) + '%'; w.appendChild(b); }
+      w.onclick = e => { const r = w.getBoundingClientRect();
+        if (au.duration) au.currentTime = ((e.clientX - r.left) / r.width) * au.duration; };
+      body.appendChild(w);
+      waveTick = () => { const p = au.duration ? (au.currentTime / au.duration) : 0;
+        const bars = w.children; const lit = Math.floor(p * bars.length);
+        for (let i = 0; i < bars.length; i++) bars[i].classList.toggle('p', i < lit); };
+      waveTick();
+      body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a : '')}</p>`));
+    } else if (S.pSty === 'lyric') {
+      const a = el('div', 'fsart sm2', `<img src="${s ? s.img : ''}" alt="">`);
+      body.appendChild(a);
+      body.appendChild(el('div', 'fsmeta tight', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a : '')}</p>`));
+      const p = el('div', 'pane sc lyfirst'); p.id = 'lyBox2';
+      body.appendChild(p); fillLyrics(p, s);
+    } else {
+      const a = el('div', 'fsart' + (S.spin ? ' disc' : '') + (!au.paused ? ' go' : ''), `<img src="${s ? s.img : ''}" alt="">`);
+      body.appendChild(a);
+      const c = el('canvas'); c.id = 'viz'; c.width = 700; c.height = 96; body.appendChild(c);
+      body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a + (s.al ? ' · ' + s.al : '') + (s.y ? ' · ' + s.y : '') : '')}</p>`));
+      startViz();
+    }
   }
   if (S.fsTab === 'lyrics') {
     const p = el('div', 'pane sc');
+    body.appendChild(p); fillLyrics(p, s);
+  }
+  if (S.fsTab === 'queue') { const p = el('div', 'pane sc'); p.appendChild(S.queue.length ? rowList(S.queue) : emptyBox(I.queue, 'Queue is empty', 'Add tracks to build it up')); body.appendChild(p); }
+  return fsRenderTail(body, s);
+}
+/* Load lyrics into a container. Shared by the Lyrics tab and the
+   Karaoke-first player style so both stay word-synced. */
+function fillLyrics(p, s) {
     p.innerHTML = `<div id="lyrHead"></div><div class="lyrwrap" id="lyrBox"><div class="lyr">Loading lyrics…</div></div>`;
-    body.appendChild(p);
     LY.lines = null; LY.el = null; LY.idx = -1; LY.wel = null; LY.widx = -1;
     if (!s) { $('#lyrBox').innerHTML = '<div class="lyr">Nothing playing.</div>'; }
     else {
@@ -2998,8 +3203,10 @@ function fsRender() {
         }
       }).catch(() => { const b = $('#lyrBox'); if (b) b.innerHTML = '<div class="lyr">Lyrics unavailable.</div>'; });
     }
-  }
-  if (S.fsTab === 'queue') { const p = el('div', 'pane sc'); p.appendChild(S.queue.length ? rowList(S.queue) : emptyBox(I.queue, 'Queue is empty', 'Add tracks to build it up')); body.appendChild(p); }
+}
+/* The remaining full-screen tabs (EQ, modes, room) — split out of fsRender
+   only to keep each function readable. */
+function fsRenderTail(body, s) {
   if (S.fsTab === 'eq') {
     const p = el('div', 'pane sc');
     p.innerHTML = `<div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px" id="fsEqP"></div>
@@ -3050,6 +3257,9 @@ function fsRender() {
   }
   if (s) $('#fsLike').textContent = isLiked(s.id) ? 'Liked' : 'Like';
 }
+/* Per-frame hooks for the Orbit and Wave player styles. They are plain
+   nulls when those styles are off, so the timeupdate path costs nothing. */
+let orbTick = null, waveTick = null;
 let vR;
 function startViz() {
   const cv = $('#viz'); if (!cv || !anN) return;
@@ -3153,7 +3363,9 @@ function buildTimed(timed) {
   });
 }
 function tickLyrics(force) {
-  if (!LY.lines || !LY.el || !$('#fs').classList.contains('open') || S.fsTab !== 'lyrics') return;
+  if (!LY.lines || !LY.el || !$('#fs').classList.contains('open')) return;
+  /* lyrics live on their own tab, and also inside the Karaoke-first player */
+  if (S.fsTab !== 'lyrics' && !(S.fsTab === 'art' && S.pSty === 'lyric')) return;
   const t = au.currentTime;
   let i = -1;
   for (let k = 0; k < LY.lines.length; k++) { if (LY.lines[k].t <= t + .15) i = k; else break; }
@@ -3286,6 +3498,54 @@ function moveCmd(d) {
   const cur = ns.find(n => +n.dataset.i === cmdSel);
   cur && cur.scrollIntoView({ block: 'nearest' });
 }
+
+/* ================= SKINS (App Look) ================= */
+/* A skin restyles the whole app in one tap — layout mood, surfaces, glow —
+   while every feature keeps working exactly the same. Classic is the app as
+   it always looked; nothing changes for anyone until they choose otherwise.
+   Skins stack with the colour themes below: a skin sets the stage, a theme
+   picks the palette on that stage. */
+const SKINS = [
+  ['classic', 'Classic', 'The original look', '#07090a,#d4ff3f'],
+  ['aurora', 'Aurora', 'Dark base, glass player, soft glow', '#0a0c11,#d4ff3f'],
+  ['liquid', 'Liquid Glass', 'Glossy translucent panels', '#0d1a2e,#7ee8fa'],
+  ['neon', 'Neon', 'Pure black with electric accents', '#000000,#00f5d4'],
+  ['poster', 'Poster', 'Big artwork, warm tone', '#1d0f13,#ffffff'],
+  ['light', 'Soft Light', 'Airy daytime look', '#f5f5f7,#f43f5e']];
+function setSkin(k) {
+  if (!SKINS.some(x => x[0] === k)) k = 'classic';
+  document.body.dataset.sk = k; S.skin = k; SET('skin', k);
+  /* Light skin needs a light theme under it or text goes invisible; pick
+     paper automatically, and restore a dark theme when leaving light. */
+  if (k === 'light' && S.theme !== 'paper') setTheme('paper');
+  if (k !== 'light' && S.theme === 'paper' && LS('skinPrevT', '')) setTheme(LS('skinPrevT', 'venom'));
+  paintAppearance();
+}
+function skinPicker() {
+  modal(`<h3>App Look</h3>
+    <div class="sb2">One tap restyles the whole app. Your music, playlists and settings stay exactly as they are.</div>
+    <div class="skgrid">${SKINS.map(([k, n, d, cs]) => { const [a, b] = cs.split(',');
+      return `<button class="skcard${S.skin === k ? ' on' : ''}" data-k="${k}">
+        <span class="skprev" style="background:linear-gradient(140deg,${a} 55%,${b})"></span>
+        <b>${n}</b><span class="skd">${d}</span></button>`; }).join('')}
+    </div>
+    <div class="sb2" style="margin-top:10px">Rooms, karaoke, equaliser, downloads — every feature works in every look.</div>`, m => {
+    m.querySelectorAll('.skcard').forEach(b => b.onclick = () => {
+      if (S.skin !== 'light' && b.dataset.k === 'light') SET('skinPrevT', S.theme);
+      setSkin(b.dataset.k);
+      m.querySelectorAll('.skcard').forEach(x => x.classList.toggle('on', x.dataset.k === S.skin));
+      toast('Look: ' + (SKINS.find(x => x[0] === S.skin) || [])[1]);
+    });
+  });
+}
+
+/* ================= PLAYER STYLES ================= */
+/* How the full-screen player draws itself. Card is the classic square art;
+   Orbit rings the art with the progress circle; Wave seeks on a waveform;
+   Lyric puts the karaoke lines front and centre. */
+const PSTYLES = [['card', 'Card'], ['orbit', 'Orbit'], ['wave', 'Wave'], ['lyric', 'Karaoke']];
+function setPSty(k) { S.pSty = k; SET('pSty', k); document.body.dataset.ps = k;
+  const f = $('#fs'); if (f && f.classList.contains('open')) fsRender(); }
 
 /* ================= THEMES ================= */
 const THEMES = [['venom', 'Venom', '#07090a,#d4ff3f'], ['cobalt', 'Cobalt', '#05080f,#4d9fff'],
@@ -3474,6 +3734,8 @@ function tickRoomProgress() {
 
 au.ontimeupdate = () => {
   tickAll();
+  if (orbTick) try { orbTick(); } catch (e) { orbTick = null; }
+  if (waveTick) try { waveTick(); } catch (e) { waveTick = null; }
   if (au.duration) {
     // two decimals is finer than any screen can show, and it stops a value
     // that is drifting in the twelfth decimal place from causing a write
@@ -3515,6 +3777,15 @@ au.onended = () => {
 const QLADDER = ['320', '160', '96', '48', '12'];
 au.onerror = () => { if (!au.src) return; errN++;
   const s = S.queue[S.idx];
+  /* A saved offline copy beats every retry: play it immediately. */
+  if (s && OFF.has(s.id) && !au.src.startsWith('blob:')) {
+    const t = au.currentTime, p = !au.paused;
+    OFF.url(s.id).then(ou => { if (!ou) return;
+      au.src = ou; try { au.currentTime = t; } catch (e) { }
+      errN = 0; if (p) au.play().catch(() => { });
+      toast('Playing your offline copy'); });
+    return;
+  }
   if (errN === 2 && S.adapt && S.q !== '12') {
     const i = QLADDER.indexOf(S.q);
     if (i >= 0 && i < QLADDER.length - 1) {
@@ -3747,6 +4018,7 @@ Please note: takedown notices should generally be directed at the party that act
    WebViews, which made the brand look like plain text. */
 { const sv = $('#sVer'); if (sv) sv.textContent = 'v' + String(BUILD.match(/\d+/) || '?')[0]; }
 setTheme(S.theme); setDens(S.dens); setAccent(S.accent); setFont(S.font); setCorner(S.corner); setGlass(S.glass); setGlassW(S.glw);
+setSkin(S.skin); document.body.dataset.ps = S.pSty;
 if (LS('hc', false)) { document.body.dataset.hc = '1'; $('#swHC').classList.add('on'); }
 buildEQ(); paintPresets(); paintModes(); paintAppearance(); paintQ(); syncKnobs();
 paintQPill();
@@ -3812,6 +4084,14 @@ if (S.room && !S.es) {
 }
 const rp = new URLSearchParams(location.search).get('room');
 if (rp) setTimeout(() => askJoin(rp), 700);
+
+/* Shared playlist links land here: #pl=<base64>. Import a copy, then clear
+   the fragment so refresh does not import it twice. */
+if (location.hash.startsWith('#pl=')) {
+  const b64 = location.hash.slice(4);
+  history.replaceState(null, '', location.pathname + location.search);
+  setTimeout(() => importSharedPl(b64), 900);
+}
 
 /* Home screen shortcuts. Long-pressing the installed icon on Android, or
    right-clicking it on Windows, offers these four; each one lands here with
