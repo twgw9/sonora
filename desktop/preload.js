@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('Desktop', {
   info: () => ipcRenderer.invoke('sonora:info'),
   openDownloads: () => ipcRenderer.invoke('sonora:openDownloads'),
   toggleMini: () => ipcRenderer.invoke('sonora:mini'),
+  getMini: () => ipcRenderer.invoke('sonora:mini-state'),
   setProgress: f => ipcRenderer.send('sonora:progress', f),
   setTitle: t => ipcRenderer.send('sonora:title', t),
   on: (channel, fn) => {

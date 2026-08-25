@@ -83,3 +83,28 @@ Local test (agar computer par ho):
   node tests/v15.js      # 76 checks
   (poora suite: looks, deep, hunt, room, perf, stress, platform, release, v15
    = 307/307 pass)
+
+APK KA FIX (is baar ka sabse bada repair):
+==========================================
+PROBLEM: purane APK me updater ka address "USER/REPO" placeholder tha —
+isliye APK har baar update try karta tha aur FAIL hota rehta tha.
+
+AB DO RASTE HAIN:
+
+RASTA 1 — Naya APK (best, ZIP me hai: apk/Sonora.apk):
+  1. Purane app me: Settings > Library > Export library (backup bana lo)
+  2. Purana Sonora UNINSTALL karo (signing key nayi hai, upar install
+     nahi hoga — ye one time hi hai)
+  3. Naya Sonora.apk install karo (Telegram/Drive/Direct bhej ke)
+  4. Settings > Library > Import library — sab wapas
+  5. Ab APK me v15 baked hai + source auto-repair + aage sab OTA
+
+RASTA 2 — Purane APK ko bina reinstall fix karo:
+  1. Purana app kholo > Settings > Updates
+  2. "Update source" field me YE paste karo:
+     https://raw.githubusercontent.com/twgw9/sonora/main/
+  3. Save > Check now > app apne aap v15 le lega, restart ho jayega
+
+NOTE: GitHub pe apk/Sonora.apk bhi badla hai (v15 + naya sign). Use bhi
+commit kar dena — Release me wahi APK jayegi aur naye users ko seedha
+fixed version milega.

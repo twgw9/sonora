@@ -54,7 +54,29 @@
       if (t && box) { t.textContent = d.ok ? 'Saved to Downloads — ' + d.name : 'Download failed'; box.classList.add('show');
         setTimeout(function () { box.classList.remove('show'); }, 2600); }
     });
-    window.Desktop.on('mini', function (on) { document.documentElement.dataset.mini = on ? '1' : '0'; });
+    /* ---- mini player ----
+       The window shrinks to a compact always-on-top player. People landed
+       here by accident (Ctrl+M or the menu) and had no visible way back —
+       the only exit was knowing the same shortcut. So now a clear, fixed
+       "Exit mini" button rides on screen whenever mini is on, and the app
+       asks the desktop for its real state on load in case it restarted
+       while small. */
+    window.Desktop.on('mini', function (on) { setMini(on); });
+    function setMini(on) {
+      document.documentElement.dataset.mini = on ? '1' : '0';
+      var old = document.getElementById('miniExit');
+      if (old) old.remove();
+      if (!on) return;
+      var b = document.createElement('button');
+      b.id = 'miniExit';
+      b.type = 'button';
+      b.title = 'Back to the full window (Ctrl+M)';
+      b.setAttribute('aria-label', 'Exit mini player');
+      b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9.5 5 16 12l-6.5 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Exit mini</span>';
+      b.onclick = function () { try { window.Desktop.toggleMini(); } catch (e) { } };
+      document.body.appendChild(b);
+    }
+    if (window.Desktop.getMini) { try { setMini(!!window.Desktop.getMini()); } catch (e) { } }
     window.Desktop.on('updated', function (msg) {
       var t = document.getElementById('toastT'), box = document.getElementById('toast');
       if (t && box) { t.textContent = (msg || 'Updated') + ' — reloading'; box.classList.add('show'); }

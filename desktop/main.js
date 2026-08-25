@@ -202,7 +202,9 @@ function toggleMini() {
     win.setAlwaysOnTop(true);
   } else {
     win.setAlwaysOnTop(false);
-    if (prevBounds) win.setBounds(prevBounds);
+    /* if the previous size was lost (restart, crash), fall back to the
+       standard window instead of leaving the app trapped small */
+    win.setBounds(prevBounds || { width: 1280, height: 820 });
   }
   send('mini', miniOn);
 }
@@ -277,6 +279,7 @@ ipcMain.handle('sonora:info', () => ({
 }));
 ipcMain.handle('sonora:openDownloads', () => shell.openPath(app.getPath('downloads')));
 ipcMain.handle('sonora:mini', () => { toggleMini(); return miniOn; });
+ipcMain.handle('sonora:mini-state', () => miniOn);
 ipcMain.on('sonora:progress', (_e, frac) => {
   if (win && !win.isDestroyed()) win.setProgressBar(frac > 0 && frac < 1 ? frac : -1);
 });

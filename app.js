@@ -7,7 +7,7 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v41-2026-08-25';
+const BUILD = 'v42-2026-08-25';
 /* The one and only place updates may come from. It is baked into the bundle,
    shown read-only in Settings and re-verified on every boot: if anything —
    a stale mirror, a copied install, a tampered profile — has pointed this
@@ -22,6 +22,27 @@ function pinUpdateSource() {
     if (localStorage.getItem('sn_src')) localStorage.removeItem('sn_src');
   } catch (e) { }
   return UPDATE_SOURCE;
+}
+/* APK repair: early Android builds shipped with a placeholder baked into
+   the native updater, so every launch the app tried to update from
+   raw.githubusercontent.com/USER/REPO/main/, failed, and stayed stuck on
+   the old interface forever. The moment any build of this app.js runs
+   inside the APK it heals the native side to the official repo and pulls
+   the current files — the user never sees the placeholder again. */
+async function pinApkSource() {
+  if (!(window.Android && window.Android.isNative)) return;
+  try {
+    const st = await api('/api/update/status', { cache: false, tries: 0 });
+    const src = st && st.source;
+    if (src && src !== UPDATE_SOURCE) {
+      /* the same locked address the website uses, pushed to the native
+         updater exactly once — never anything else */
+      await api('/api/update/source?url=' + encodeURIComponent(UPDATE_SOURCE), { cache: false, tries: 0 });
+      toast('Update source repaired to the official repo');
+    }
+    const d = await api('/api/update/check', { cache: false, tries: 0 });
+    if (d && d.reload) { toast('Updated — restarting'); setTimeout(() => window.Android.reloadApp(), 900); }
+  } catch (e) { }
 }
 (async () => {
   try {
@@ -2006,6 +2027,12 @@ function vPrefs(v) {
     toggle(S.glass, on => setGlass(on)));
   row(g, 'Glass widget', 'Frosted now-playing bar, mini player and card — comes on instead of the plain bar',
     toggle(S.glw, on => setGlassW(on)));
+  /* Mini player lives in the Windows/desktop shell — the toggle that used
+     to be reachable only through the native menu (Ctrl+M). People who hit
+     it by accident had no visible way back, so it is a real setting now. */
+  if (window.Desktop && window.Desktop.isDesktop)
+    row(g, 'Mini player', 'Compact always-on-top window · Ctrl+M · Exit button shows while it is on',
+      btn(window.document.documentElement.dataset.mini === '1' ? 'Exit mini' : 'Go mini', () => window.Desktop.toggleMini(), 1));
 
   g = group('Home', 'Cards at the top of the home page. Off by default so the music comes first');
   row(g, 'Bento dashboard', 'Jump back in, week bars, mood dice, daily mix',
@@ -4612,6 +4639,8 @@ setSkin(S.skin); document.body.dataset.ps = S.pSty;
 /* update source pin: verified every boot, healed silently if anything
    ever moved it (see UPDATE_SOURCE above) */
 pinUpdateSource();
+/* inside the APK, also repair the native updater and catch up */
+setTimeout(pinApkSource, 2500);
 /* performance profile: applies the lite class before first paint matters */
 applyLite();
 /* AI Help stays invisible until it is switched on in Settings */

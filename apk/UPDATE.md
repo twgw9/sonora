@@ -99,3 +99,28 @@ Run `node --check app.js` in the project root, fix any error, rebuild.
 
 **Nothing plays** — the phone has no internet, or JioSaavn is unreachable.
 The app needs a connection to stream; only your library is stored locally.
+
+---
+
+## v15 note — new signing key (IMPORTANT)
+
+The `apk/Sonora.apk` in this repo is now signed with a **new key** (the old
+one was lost with the build machine). Android only installs an update when
+the signature matches, so installing this APK **over an older Sonora APK
+will fail** with "App not installed".
+
+One time only:
+1. In the old app: Settings → Library → **Export library** (saves your
+   likes/playlists as a file)
+2. Uninstall the old Sonora
+3. Install this APK
+4. Settings → Library → **Import library** — everything is back
+
+After that, every future update arrives over the air again — no reinstall,
+no data loss. The v15 app also repairs the update source on its own on
+every launch (early APKs had a placeholder baked in, which is why
+self-update kept failing).
+
+If you would rather not reinstall: open the old app → Settings → Updates →
+Update source → paste `https://raw.githubusercontent.com/twgw9/sonora/main/`
+→ Save → Check now. That fixes the old install in place too.

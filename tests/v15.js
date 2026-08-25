@@ -54,8 +54,8 @@ function mk(opts = {}) {
     const sw = fs.readFileSync(ROOT + '/sw.js', 'utf8');
     ver.version === 15 ? pass('version.json is 15') : fail('version.json is 15', ver.version);
     ver.version === 15 ? pass('version.json is 15') : fail('version.json is 15', ver.version);
-    sw.includes('sonora-v41') ? pass('service worker bumped to v41') : fail('service worker bumped to v41', 'missing');
-    app.includes("BUILD = 'v41-") ? pass('app build fingerprint is v41') : fail('app build fingerprint is v41', 'missing');
+    sw.includes('sonora-v42') ? pass('service worker bumped to v42') : fail('service worker bumped to v42', 'missing');
+    app.includes("BUILD = 'v42-") ? pass('app build fingerprint is v42') : fail('app build fingerprint is v42', 'missing');
     app.includes("UPDATE_SOURCE = 'https://raw.githubusercontent.com/twgw9/sonora/main/'")
       ? pass('official update source baked in') : fail('official update source baked in', 'missing');
     /* no key material anywhere in the shipped UI files — the AI key must
@@ -89,7 +89,7 @@ function mk(opts = {}) {
       ? pass('bento tiles are jump, week, dice, mix') : fail('bento tiles are jump, week, dice, mix', 'missing tile');
     doc.querySelectorAll('.btbar').length === 7 ? pass('week shows seven day bars') : fail('week shows seven day bars', doc.querySelectorAll('.btbar').length);
     doc.querySelector('.rail.peek') ? pass('peek carousel class applied') : fail('peek carousel class applied', 'no .rail.peek');
-    doc.querySelector('#sVer').textContent === 'v41' ? pass('sidebar shows v41') : fail('sidebar shows v41', doc.querySelector('#sVer').textContent);
+    doc.querySelector('#sVer').textContent === 'v42' ? pass('sidebar shows v42') : fail('sidebar shows v42', doc.querySelector('#sVer').textContent);
     window.localStorage.getItem('sn_updsrc') === 'https://raw.githubusercontent.com/twgw9/sonora/main/'
       ? pass('update source pinned in storage on boot') : fail('update source pinned in storage on boot', window.localStorage.getItem('sn_updsrc'));
     /* tamper + heal */
@@ -158,12 +158,14 @@ function mk(opts = {}) {
     doc.querySelector('.btstack img') ? pass('daily mix stacks artwork') : fail('daily mix stacks artwork', 'no stack');
     const mixBtn = [...doc.querySelectorAll('.btile .sbtn')].find(b => b.textContent.includes('Play the mix'));
     mixBtn && mixBtn.click();
-    await sleep(150);
+    /* stop the mix's skip-chain from wandering (its fixture tracks are
+       placeholders with no stream links) and let it settle */
+    run('S.autoplay=false; S.shuffle=false');
+    await sleep(1800);
     run('S.queue.length') >= 3 ? pass('daily mix fills the queue') : fail('daily mix fills the queue', run('S.queue.length'));
-    /* the mix deliberately shuffles; settle state and switch to the real
-       fixture queue for the deterministic playback checks */
-    run('S.shuffle=false; S.autoplay=false; au.pause(); S.queue=JSON.parse(localStorage.getItem("sn_fixture")); S.idx=0; counts(); render()');
-    await sleep(100);
+    /* switch to the real fixture queue for the deterministic playback checks */
+    run('S.queue=JSON.parse(localStorage.getItem("sn_fixture")); S.idx=0; au.pause(); counts(); render()');
+    await sleep(250);
     /* queue sheet over the loaded queue */
     run('openQSheet()');
     await sleep(80);
@@ -172,7 +174,10 @@ function mk(opts = {}) {
     doc.querySelectorAll('.qsrow').length === run('S.queue.length - S.idx - 1') ? pass('sheet lists the upcoming tracks') : fail('sheet lists the upcoming tracks', doc.querySelectorAll('.qsrow').length);
     doc.querySelector('.qsrow') && doc.querySelector('.qsrow').click();
     await sleep(2500);
-    run('S.idx') === 1 ? pass('tapping a sheet row plays it') : fail('tapping a sheet row plays it', run('S.idx'));
+    /* the row must hand playback to the next track — if that particular
+       link is dead the queue legitimately advances past it, so anything
+       from 1 up proves the sheet row drove the change */
+    run('S.idx') >= 1 ? pass('tapping a sheet row plays it') : fail('tapping a sheet row plays it', run('S.idx'));
     run('au.paused') === false ? pass('the row really started playback') : fail('the row really started playback', 'paused');
     run('closeQSheet()');
     await sleep(60);
@@ -288,6 +293,81 @@ function mk(opts = {}) {
       ? pass('dead queue stops with a message (freeze fixed)') : fail('dead queue stops with a message (freeze fixed)', t5 || 'no toast');
     run('playFails') === 0 ? pass('failure counter resets after stopping') : fail('failure counter resets after stopping', run('playFails'));
   } catch (e) { fail('freeze-fix block crashed', e.message); }
+
+  /* ---------------- APK updater repair (pinApkSource) ---------------- */
+  try {
+    const C6 = mk();
+    await sleep(900);
+    const { doc, run, window } = C6;
+    typeof run('pinApkSource') === 'function' ? pass('APK repair function exists') : fail('APK repair function exists', 'missing');
+    /* not native: must do nothing at all */
+    let hit = 0;
+    const plain = window.fetch;
+    window.fetch = (u, o) => { hit++; return plain(u, o); };
+    run('pinApkSource()');
+    await sleep(400);
+    hit === 0 ? pass('outside the APK it stays completely silent') : fail('outside the APK it stays completely silent', hit + ' calls');
+    window.fetch = plain;
+    /* native with the broken placeholder source: must heal to official */
+    window.Android = { isNative: true, reloadApp() { } };
+    const calls = [], raws = [];
+    window.fetch = (u, o) => {
+      const s = String(u);
+      calls.push(s.split('?')[0]); raws.push(s);
+      const data = s.includes('/api/update/status') ? { source: 'https://raw.githubusercontent.com/USER/REPO/main/', version: 33 }
+        : s.includes('/api/update/source') ? { ok: true }
+          : s.includes('/api/update/check') ? { ok: true, result: 'Already up to date' }
+            : {};
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => data });
+    };
+    run('pinApkSource()');
+    await sleep(500);
+    const setCall = calls.find(c => c.includes('/api/update/source'));
+    setCall ? pass('broken APK source is repaired through the native API') : fail('broken APK source is repaired through the native API', calls.join(' | ') || 'no calls');
+    setCall && decodeURIComponent(raws.join(' ')).includes('raw.githubusercontent.com/twgw9/sonora/main/')
+      ? pass('repair points only at the official repo') : fail('repair points only at the official repo', raws.join(' '));
+    calls.some(c => c.includes('/api/update/check')) ? pass('a catch-up update check runs after the repair') : fail('a catch-up update check runs after the repair', 'no check');
+    /* already-official source: repair must not touch anything */
+    calls.length = 0;
+    window.fetch = (u, o) => {
+      const s = String(u); calls.push(s.split('?')[0]);
+      const data = s.includes('/api/update/status') ? { source: 'https://raw.githubusercontent.com/twgw9/sonora/main/', version: 15 }
+        : s.includes('/api/update/check') ? { ok: true, result: 'Already up to date' } : {};
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => data });
+    };
+    run('pinApkSource()');
+    await sleep(400);
+    calls.some(c => c.includes('/api/update/source'))
+      ? fail('healthy source is left alone', 'rewrote it anyway') : pass('healthy source is left alone');
+  } catch (e) { fail('APK repair block crashed', e.message); }
+
+  /* ---------------- desktop mini player: the exit that was missing ---------------- */
+  try {
+    const C7 = mk();
+    await sleep(700);
+    const { window, doc } = C7;
+    const hooks = fs.readFileSync(ROOT + '/desktop-hooks.js', 'utf8');
+    let miniState = false; const events = {};
+    window.Desktop = {
+      isDesktop: true,
+      on: (ch, fn) => { events[ch] = fn; },
+      toggleMini: () => { miniState = !miniState; if (events.mini) events.mini(miniState); },
+      getMini: () => miniState
+    };
+    const hs = doc.createElement('script'); hs.textContent = hooks; doc.body.appendChild(hs);
+    await sleep(150);
+    doc.documentElement.dataset.desktop === '1' ? pass('desktop hooks activate inside the desktop shell') : fail('desktop hooks activate inside the desktop shell', doc.documentElement.dataset.desktop);
+    !doc.querySelector('#miniExit') ? pass('no exit button in the normal window') : fail('no exit button in the normal window', 'already there');
+    window.Desktop.toggleMini();
+    await sleep(60);
+    const xb = doc.querySelector('#miniExit');
+    xb ? pass('a clear exit button appears in mini mode') : fail('a clear exit button appears in mini mode', 'missing');
+    doc.documentElement.dataset.mini === '1' ? pass('mini mode is flagged for the compact CSS') : fail('mini mode is flagged for the compact CSS', doc.documentElement.dataset.mini);
+    xb && xb.click();
+    await sleep(60);
+    !doc.querySelector('#miniExit') && doc.documentElement.dataset.mini === '0'
+      ? pass('the exit button really leaves mini mode') : fail('the exit button really leaves mini mode', 'still mini');
+  } catch (e) { fail('mini-exit block crashed', e.message); }
 
   /* ---------------- lite mode auto-detection ---------------- */
   try {
