@@ -52,8 +52,11 @@ Section "Sonora"
   WriteRegStr HKCU "Software\Sonora" "InstallDir" "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  CreateShortcut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}"
-  CreateShortcut "$DESKTOP\${APP}.lnk" "$INSTDIR\${EXE}"
+  ; shortcuts carry the app icon explicitly and start in the install dir,
+  ; so Windows never shows a generic Electron icon or a broken working path
+  SetOutPath "$INSTDIR"
+  CreateShortcut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
+  CreateShortcut "$DESKTOP\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
 
   ; sonora:// links open the app
   WriteRegStr HKCU "Software\Classes\sonora" "" "URL:Sonora"

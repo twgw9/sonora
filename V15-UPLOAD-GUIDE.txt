@@ -1,0 +1,85 @@
+SONORA v15 — GITHUB PE KAISE DALE (aasan tarika)
+=================================================
+
+Is baar YE files badli hain (sonora-v15.zip me sab hain):
+
+  1. app.js              (bento home, vinyl player, radial menu, queue sheet,
+                          AI Help 5 providers, lite mode, freeze fix)
+  2. styles.css          (naya CSS: vinyl, radial, sheet, bento, lite, AI)
+  3. index.html          (AI button + player ke naye chips + AI panel)
+  4. sw.js               (cache version sonora-v41)
+  5. version.json        (version 15 — YE SABSE LAST ME DALNA)
+  6. tests/v15.js        (NAYI test file — 76 checks)
+  7. CHANGES.md, README.md            (docs)
+  8. desktop/package.json, desktop/installer.nsi   (Windows icon fix)
+
+STEPS (website se, phone se bhi ho jata hai):
+---------------------------------------------
+1. github.com/twgw9/sonora kholo (login karo)
+2. Har badli hui file ke liye:
+   file pe click > pencil (Edit) icon > poora select (Ctrl+A) > delete
+   > zip wali file ka content paste > Commit changes
+3. tests/v15.js NAYI file hai: tests folder kholo > Add file >
+   Create new file > naam "v15.js" > content paste > Commit
+4. desktop/package.json aur desktop/installer.nsi bhi waise hi
+   (desktop folder ke andar hain)
+
+*** version.json SABSE AAKHRI ME commit karna! ***
+Kyunki version.json push hote hi "Build and Release" workflow chal jaati
+hai — baaki files pehle pahunchi honi chahiye.
+
+version.json commit hote hi:
+  - Actions me "Build and Release" apne aap chalegi (green tick aani chahiye)
+  - 15-25 min me Release v15 ban jayegi (Windows exe + mac + linux)
+  - Sab installed apps ko 6 ghante ke andar "Update v15 available" dikhega
+  - APK / website / desktop — sab OTA se naya interface le lenge
+  - NAYA APK BANANE KI ZARURAT NAHI (web change hai, OTA cover karta hai)
+
+NAYA KYA HAI v15 ME (users ko batane ke liye):
+----------------------------------------------
+- Bento Home: Jump back in + Your week (7 din ke bars) + Mood dice + Daily Mix
+- Vinyl player style (5th): record + grooves + needle + progress ring
+- Radial menu: player ke artwork ko press-and-hold karo -> 6 actions circle me
+- Up next: bottom sheet (mini player ko long-press karo)
+- Peek carousels + search me bade rank numbers
+- Lite mode: sasta phone pe auto — blur/spin/viz sab band, smooth chalta hai
+- AI Help: Settings > AI Help > ON karo (default OFF hai)
+  - 5 services: OpenRouter / Groq / Gemini / OpenAI / Mistral
+  - Ek fail ho to doosra saved key apne aap use hota hai
+  - Playlist bhi banata hai: "Make a playlist" > vibe bolo
+- Freeze fix: pura queue dead ho to app atakta nahi, message dikhata hai
+- Windows exe icon fix (Electron wala generic icon nahi aayega ab)
+
+AI KEY KAISE LE (free wale pehle):
+----------------------------------
+1. GROQ (sabse fast + FREE): console.groq.com > sign up (Google se kar lo)
+   > API Keys > Create API Key > copy (gsk_... se shuru)
+2. GOOGLE GEMINI (FREE): aistudio.google.com/apikey > Google account se
+   sign in > Create API key > copy (AIza... se shuru)
+3. OPENROUTER (sabse zyada models): openrouter.ai > sign up > Keys >
+   Create Key (sk-or-... se shuru). Kuch models free hain.
+4. MISTRAL (free tier): console.mistral.ai > sign up > API Keys
+5. OPENAI (paid): platform.openai.com > API keys > Create new secret key
+
+Phir app me: Settings > AI Help > ON > service choose karo > key paste >
+Save. Bas. Key sirf tumhare browser me rehti hai.
+
+IMPORTANT (security):
+- Jo purani key Telegram/chat me bheji thi wo AB REVOKE kar do aur nayi
+  bana lo. Kahin bhi public key = koi aur tumhare paise use kar sakta hai.
+- Key kabhi kisi file/ZIP/me repo me paste mat karna — sirf Settings me.
+
+UPLOAD KE BAAD CHECK:
+---------------------
+1. github.com/twgw9/sonora/actions — "Build and Release" green honi chahiye
+2. website kholo (render ya local) — sidebar me v41 dikhna chahiye
+3. Settings > About > Update source > Verify — official repo dikhega
+4. Phone wala app kholo -> 6 ghante me ya force-restart pe v15 aa jayega
+
+Local test (agar computer par ho):
+----------------------------------
+  node start.js          # server
+  npm install --no-save jsdom
+  node tests/v15.js      # 76 checks
+  (poora suite: looks, deep, hunt, room, perf, stress, platform, release, v15
+   = 307/307 pass)

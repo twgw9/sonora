@@ -7,6 +7,14 @@ Premium music streaming — real 7-band equaliser, 16 studio sound modes, offlin
 downloads, live listening rooms and a live listener counter.
 **Zero npm dependencies.**
 
+v15 highlights: bento home dashboard (jump back in, week bars, mood dice,
+daily mix), a fifth Vinyl player style, radial quick menu on long-press,
+up-next bottom sheet, peek carousels, ranked search, Lite mode for cheap
+phones, and an optional AI Help assistant (off by default, bring your own
+key from OpenRouter / Groq / Gemini / OpenAI / Mistral — stored only on
+your device, with automatic fallback between them).
+
+
 ---
 
 ## Builds currently published

@@ -7,7 +7,22 @@
    This is what makes "I don't see the changes" impossible. */
 const TELEGRAM = 'https://t.me/sonoramusicm';
 const REPO = 'https://github.com/twgw9/sonora';
-const BUILD = 'v39-2026-08-25';
+const BUILD = 'v41-2026-08-25';
+/* The one and only place updates may come from. It is baked into the bundle,
+   shown read-only in Settings and re-verified on every boot: if anything —
+   a stale mirror, a copied install, a tampered profile — has pointed this
+   copy at a different source, it is silently healed back to the official
+   repo. No setting, UI or API can ever change it (see PART 5, bug 36). */
+const UPDATE_SOURCE = 'https://raw.githubusercontent.com/twgw9/sonora/main/';
+function pinUpdateSource() {
+  try {
+    const cur = localStorage.getItem('sn_updsrc');
+    if (cur !== UPDATE_SOURCE) localStorage.setItem('sn_updsrc', UPDATE_SOURCE);
+    /* heal a tampered sn_src too (older field name kept for migration) */
+    if (localStorage.getItem('sn_src')) localStorage.removeItem('sn_src');
+  } catch (e) { }
+  return UPDATE_SOURCE;
+}
 (async () => {
   try {
     const prev = localStorage.getItem('sn_build');
@@ -146,6 +161,10 @@ const I = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4.5 6.5h15M9.5 6.5V4.2h5v2.3M6.5 6.5 7.4 20h9.2l.9-13.5"/></svg>',
   next: '<svg viewBox="0 0 24 24"><path d="M14 12 6 6.5v11z" style="fill:currentColor;stroke:none"/><path d="M17.5 6v12" stroke-width="2.2"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13.4" r="7.6"/><path d="M12 9.6v4l2.6 1.8M9.4 2.4h5.2"/></svg>',
+  x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  spark: '<svg viewBox="0 0 24 24"><path d="M12 2.5l2.2 6.1 6.3.3-4.9 4 1.7 6.1L12 15.6 6.7 19l1.7-6.1-4.9-4 6.3-.3z"/></svg>',
+  dice: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.3" fill="currentColor" stroke="none"/></svg>',
 };
 
 /* ========================================================= */
@@ -160,9 +179,14 @@ const S = {
         .map(p => ({ id: p.id || Date.now(), name: p.name, songs: uniqById(p.songs) })),
   stats: (() => { const v = LS('stats', null);
     const ok = v && typeof v === 'object' && !Array.isArray(v);
+    const days = {}; if (ok && v.days && typeof v.days === 'object' && !Array.isArray(v.days)) {
+      /* keep only the last 14 days — a forever-growing calendar is a slow leak */
+      const cut = new Date(Date.now() - 14 * 86400e3).toISOString().slice(0, 10);
+      for (const k in v.days) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && k >= cut && isFinite(+v.days[k])) days[k] = +v.days[k];
+    }
     return { secs: ok && +v.secs > 0 ? +v.secs : 0, plays: ok && +v.plays > 0 ? +v.plays : 0,
       artists: ok && v.artists && typeof v.artists === 'object' && !Array.isArray(v.artists) ? v.artists : {},
-      modes: ok && v.modes && typeof v.modes === 'object' && !Array.isArray(v.modes) ? v.modes : {} }; })(),
+      modes: ok && v.modes && typeof v.modes === 'object' && !Array.isArray(v.modes) ? v.modes : {}, days }; })(),
   shuffle: false, repeat: 'off', autoplay: LS('auto', true),
   q: LS('q', '320'), adapt: LS('adapt', true), dlMax: LS('dlMax', true), lang: LS('lang', 'hindi'),
   mode: LS('mode', 'off'), quick: LS('quick', 'lofi'), eq: (() => { const v = LS('eq', null);
@@ -172,8 +196,15 @@ const S = {
   rain: false, kar: false, cmp: LS('cmp', false), fade: true, spin: LS('spin', true),
   theme: LS('theme','venom'), dens: LS('dens','default'), accent: LS('accent','default'), font: LS('font','grotesk'), corner: LS('corner','default'),
   /* App Look: a skin restyles the whole interface in one tap. Classic is the
-     original look; every feature works identically under every skin. */
-  skin: LS('skin', 'classic'),
+     original look; every feature works identically under every skin.
+     Aurora — dark base with a glass player and a soft glow — is the default
+     face of v15; anyone who ever chose a look keeps theirs untouched. */
+  skin: LS('skin', 'aurora'),
+  /* Bento home dashboard: jump-back-in, week bars, mood dice, daily mix. */
+  bento: LS('bento', true),
+  /* Lite mode: auto detects weak hardware / data-saver / reduced-motion and
+     drops the expensive surface effects; on/off force it either way. */
+  lite: LS('lite', 'auto'),
   /* Player style: how the full-screen player draws itself. */
   pSty: LS('pSty', 'card'),
   /* Last playlist a track was added to — powers one-tap Quick add. */
@@ -201,6 +232,14 @@ const S = {
   req: LS('req', []),
   /* resume last queue */
   resume: LS('resume', true),
+  /* AI Help — optional assistant, OFF by default and switched on in
+     Settings. Bring your own key from any of five providers; keys are
+     stored ONLY in this browser (localStorage) and sent straight to the
+     provider — never shipped in the app, never sent to Sonora's server. */
+  aiOn: LS('aiOn', false),
+  aiProv: LS('aiProv', 'openrouter'),
+  aiKeys: (() => { const v = LS('aiKeys', {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; })(),
+  aiModels: (() => { const v = LS('aiModels', {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; })(),
 };
 try { if (LS('cmp', false) === true && !LS('cmpMigrated', false)) { SET('cmp', false); SET('cmpMigrated', true); } } catch (e) { }
 /* Resume gate: the saved queue is only honoured when the setting says so. */
@@ -664,6 +703,8 @@ function surl(s, q) {
   return s.raw ? '/stream?u=' + encodeURIComponent(s.raw) : '';
 }
 let errN = 0;
+/* consecutive tracks that failed to load — the guard against the freeze */
+let playFails = 0;
 async function play(list, i) {
   if (list) { S.queue = list.slice(0, 400); S.idx = i; }
   const s = S.queue[S.idx]; if (!s) return;
@@ -676,13 +717,21 @@ async function play(list, i) {
     const ou = await OFF.url(s.id);
     if (ou) url = ou;
   }
-  if (!url) { toast('Track unavailable'); return skip(true); }
+  if (!url) {
+    /* A whole queue of dead links used to spin forever: with shuffle on,
+       skip() picks a random track, play() fails again (the failure is now
+       cached, so nothing even hits the network) and the play->skip chain
+       lives on microtasks alone — the page froze hard. Count consecutive
+       load failures and stop after one lap of the queue. */
+    if (++playFails > Math.min(S.queue.length + 2, 15)) { playFails = 0; au.pause(); return toast('Those tracks are unavailable right now'); }
+    toast('Track unavailable'); return skip(true);
+  }
   wake(); au.src = url;
   const v = clamp($('#vol').value / 100, 0, 1); setVol(S.fade ? 0 : v);
   /* One retry: WebViews sometimes reject the very first play() with a
      NotAllowedError even after a user gesture; a second attempt 250ms later
      goes through. Without this, "nothing happens" on the first tap. */
-  try { await au.play(); errN = 0; }
+  try { await au.play(); errN = 0; playFails = 0; }
   catch (e) { await wait(250); try { await au.play(); errN = 0; } catch (e2) { toast('Tap play to allow audio'); } }
   if (S.fade) fadeTo(v, 600);
   /* Remember the queue so a restart can resume where you left off. */
@@ -953,7 +1002,7 @@ function addToPl(s) {
     ${S.pls.map((p, i) => `<button class="db plrow${i === last ? ' rec' : ''}" data-i="${i}" data-n="${esc(p.name).toLowerCase()}">
       <span class="plr-ic">${p.songs[0] && p.songs[0].img ? `<img src="${imgAt(p.songs[0].img, 50)}" alt="">` : I.music}</span>
       <span class="plr-t">${esc(p.name)}${i === last ? ' <em>· recent</em>' : ''}<small>${p.songs.length} ${p.songs.length === 1 ? 'track' : 'tracks'}${p.songs.some(x => x.id === s.id) ? ' · already added' : ''}</small></span>
-      <span class="plr-add">${p.songs.some(x => x.id === s.id) ? '✓' : '+'}</span></button>`).join('') || '<span class="sb2">No playlists yet — type a name above and create one.</span>'}</div>
+      <span class="plr-add">${p.songs.some(x => x.id === s.id) ? '<svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round"><path d="M4.5 12.5 9.5 17.5 19.5 7"/></svg>' : '+'}</span></button>`).join('') || '<span class="sb2">No playlists yet — type a name above and create one.</span>'}</div>
     <button class="wb pri" id="pg">Create new playlist</button>`, m => {
     const q = m.querySelector('#plq'), listEl = m.querySelector('#plList'), pg = m.querySelector('#pg');
     const filter = () => { const v = q.value.trim().toLowerCase();
@@ -1192,8 +1241,8 @@ function cardEl(x, cb, yr, song) {
   });
   return c;
 }
-const sGrid = (a, rail, yr) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach((s, i) => g.appendChild(cardEl(s, () => play(a, i), yr, true))); return g; };
-const cGrid = (a, rail) => { const g = el('div', (rail ? 'rail sc' : 'grid') + ' stg'); a.forEach(x => g.appendChild(cardEl(x, () => x.k === 'artist' ? openArtist(x) : openColl(x), false, false))); return g; };
+const sGrid = (a, rail, yr) => { const g = el('div', (rail ? 'rail peek sc' : 'grid') + ' stg'); a.forEach((s, i) => g.appendChild(cardEl(s, () => play(a, i), yr, true))); return g; };
+const cGrid = (a, rail) => { const g = el('div', (rail ? 'rail peek sc' : 'grid') + ' stg'); a.forEach(x => g.appendChild(cardEl(x, () => x.k === 'artist' ? openArtist(x) : openColl(x), false, false))); return g; };
 
 /* An album or playlist card needs its own menu: you cannot queue a container
    without fetching what is inside it first. */
@@ -1444,6 +1493,85 @@ function langRow(cb) { const c = el('div', 'crow sc');
   LANGS.forEach(l => { const b = el('button', 'chip' + (l === S.lang ? ' on' : ''), l[0].toUpperCase() + l.slice(1));
     b.onclick = () => { S.lang = l; SET('lang', l); cb(); }; c.appendChild(b); }); return c; }
 
+/* ================= BENTO HOME ================= */
+/* Mixed-size tiles at the top of Home. Every tile is a real shortcut into
+   something the app already knows: what you played, how the week is going,
+   a random mood, an instant mix of your own taste. Small enough to leave
+   the music in the first screenful, useful enough to earn its spot. */
+function bentoBoard() {
+  const b = el('div', 'bento');
+
+  /* — Jump back in — */
+  const jr = S.recent.slice(0, 3);
+  const jt = el('div', 'btile btjump');
+  jt.innerHTML = `<div class="bth"><span>Jump back in</span><em>Pick up where you left off</em></div>`;
+  if (jr.length) {
+    const rows = el('div', 'btrows');
+    jr.forEach((s, i) => { const r = el('button', 'btrow');
+      r.innerHTML = `<img loading="lazy" src="${imgAt(s.img, 50)}" alt=""><span class="cl">${esc(s.t)}</span>`;
+      r.onclick = () => play(S.recent, i); rows.appendChild(r); });
+    jt.appendChild(rows);
+    const acts = el('div', 'btacts');
+    const pl = el('button', 'sbtn pri', 'Play');
+    pl.onclick = () => play(S.recent, 0);
+    const sh = el('button', 'sbtn', 'Shuffle');
+    sh.onclick = () => { S.shuffle = true; $('#shuf').classList.add('on'); play([...S.recent].sort(() => Math.random() - .5), 0); };
+    acts.append(pl, sh); jt.appendChild(acts);
+  } else {
+    jt.appendChild(el('div', 'btempty', 'Nothing played yet'));
+    const go = el('button', 'sbtn pri', 'Find music'); go.onclick = () => nav('trend'); jt.appendChild(go);
+  }
+  b.appendChild(jt);
+
+  /* — Your week: seven day-bars straight out of the listening history — */
+  const wk = el('div', 'btile btweek');
+  const days = S.stats.days || {}, today = new Date();
+  const bars = [], labels = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400e3);
+    const k = d.toISOString().slice(0, 10);
+    bars.push(Math.min(600, +days[k] || 0)); labels.push('SMTWTFS'[d.getDay()]);
+  }
+  const mx = Math.max(30, ...bars);
+  const mins = Math.round((S.stats.secs || 0) / 60);
+  wk.innerHTML = `<div class="bth"><span>Your week</span><em>${mins} min all-time · ${S.stats.plays || 0} plays</em></div>
+    <div class="btbars">${bars.map((v, i) => `<div class="btbar${i === 6 ? ' now' : ''}" title="${Math.round(v / 60)} min">
+      <i style="--h:${Math.max(6, Math.round(v / mx * 100))}%"></i><span>${labels[i]}</span></div>`).join('')}</div>`;
+  const wkBtn = el('button', 'sbtn', 'Full insights'); wkBtn.onclick = () => nav('stats');
+  wk.appendChild(wkBtn);
+  b.appendChild(wk);
+
+  /* — Mood dice: one tap, one surprise mix — */
+  const dt = el('div', 'btile btdice');
+  let diceName = 'Roll it';
+  dt.innerHTML = `<div class="bth"><span>Mood dice</span><em>One tap, one mix</em></div>
+    <button class="btdicebtn" aria-label="Roll a mood and play it">${I.dice}<b class="btdname">${esc(diceName)}</b></button>`;
+  const roll = () => {
+    const m = MOODS[Math.floor(Math.random() * MOODS.length)];
+    const nm = dt.querySelector('.btdname'); if (nm) nm.textContent = m[0];
+    if (!liteOn()) { const d = dt.querySelector('.btdicebtn'); d.classList.remove('roll'); void d.offsetWidth; d.classList.add('roll'); }
+    openMood(m[0], m[1]);
+  };
+  dt.querySelector('.btdicebtn').onclick = roll;
+  b.appendChild(dt);
+
+  /* — Daily mix: liked + recent, deduped, shuffled — */
+  const mixSrc = uniqById([...S.liked, ...S.recent]);
+  const mt = el('div', 'btile btmix');
+  const art = mixSrc.slice(0, 3).map(s => `<img loading="lazy" src="${imgAt(s.img, 150)}" alt="">`).join('');
+  mt.innerHTML = `<div class="bth"><span>Daily Mix</span><em>${mixSrc.length ? 'Made from what you play' : 'Grows as you listen'}</em></div>
+    <div class="btstack">${art || '<div class="btempty2">Your likes build this</div>'}</div>`;
+  const mixBtn = el('button', 'sbtn' + (mixSrc.length >= 3 ? ' pri' : ''), mixSrc.length >= 3 ? 'Play the mix' : 'No mix yet');
+  mixBtn.onclick = () => {
+    if (mixSrc.length < 3) return nav('trend');
+    S.shuffle = true; $('#shuf').classList.add('on');
+    play([...mixSrc].sort(() => Math.random() - .5).slice(0, 25), 0);
+  };
+  mt.appendChild(mixBtn);
+  b.appendChild(mt);
+  return b;
+}
+
 async function vHome(v) {
   const h = new Date().getHours();
   const greet = h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1567,7 +1695,11 @@ async function vHome(v) {
   })();
 
   if (S.wid) v.appendChild(widgetBoard());
-  if (S.recent.length) { v.appendChild(H('Jump back in', 'Pick up where you left off')); v.appendChild(railWrap(sGrid(S.recent.slice(0, 16), true))); }
+  /* Bento dashboard: a compact mixed-size mosaic — resume, week bars, mood
+     dice and a daily mix — sized so the actual music still starts in the
+     first screenful. Turn it off in Settings → Home. */
+  if (S.bento) v.appendChild(bentoBoard());
+  if (S.recent.length && !S.bento) { v.appendChild(H('Jump back in', 'Pick up where you left off')); v.appendChild(railWrap(sGrid(S.recent.slice(0, 16), true))); }
   if (S.liked.length > 3) { v.appendChild(H('From your likes', 'Built from the songs you saved')); v.appendChild(railWrap(sGrid([...S.liked].sort(() => Math.random() - .5).slice(0, 16), true))); }
   const slots = {};
   [['trending', 'Trending now', S.lang], ['charts', 'Top charts'], ['playlists', 'Curated playlists'],
@@ -1705,7 +1837,10 @@ async function vSearch(v) {
       });
       b.appendChild(tb); b.appendChild(gap(8));
       const show = k => S.sfTab === 'all' || S.sfTab === k;
-      if (show('songs') && d.songs?.length) { b.appendChild(H('Songs', d.songs.length + ' matches')); b.appendChild(playBar(d.songs)); b.appendChild(gap(10)); b.appendChild(rowList(d.songs)); }
+      if (show('songs') && d.songs?.length) { b.appendChild(H('Songs', d.songs.length + ' matches')); b.appendChild(playBar(d.songs)); b.appendChild(gap(10));
+        /* Ranked rows — big outline position numbers, the pattern search
+           results lean on when the list is long and similar. */
+        const rl = rowList(d.songs); rl.classList.add('rank'); b.appendChild(rl); }
       if (show('albums') && d.albums?.length) { b.appendChild(H('Albums', 'Full records')); b.appendChild(railWrap(cGrid(d.albums, true))); }
       if (show('artists') && d.artists?.length) { b.appendChild(H('Artists', 'Matching performers')); b.appendChild(railWrap(cGrid(d.artists, true))); }
       if (show('pls') && d.playlists?.length) { b.appendChild(H('Playlists', 'Ready-made collections')); b.appendChild(railWrap(cGrid(d.playlists, true))); }
@@ -1872,7 +2007,9 @@ function vPrefs(v) {
   row(g, 'Glass widget', 'Frosted now-playing bar, mini player and card — comes on instead of the plain bar',
     toggle(S.glw, on => setGlassW(on)));
 
-  g = group('Home widgets', 'Cards at the top of the home page. Off by default so the music comes first');
+  g = group('Home', 'Cards at the top of the home page. Off by default so the music comes first');
+  row(g, 'Bento dashboard', 'Jump back in, week bars, mood dice, daily mix',
+    toggle(S.bento, on => { S.bento = on; SET('bento', on); render(); }));
   row(g, 'Show widgets', S.wid ? 'Pick which ones below' : 'Home starts with the music',
     toggle(S.wid, on => { S.wid = on; SET('wid', on); render(); }));
   row(g, 'Widget style', 'Now-playing card look', seg([['d', 'Default'], ['g', 'Glass']], S.wSty,
@@ -1881,6 +2018,22 @@ function vPrefs(v) {
     row(g, n, d, toggle(widOn(k), () => widToggle(k))));
   row(g, 'Phone home screen', 'Shortcuts straight to trending, liked, search and rooms',
     btn('How', () => homeScreenHelp(), 1));
+
+  g = group('Performance', 'Smooth on any phone');
+  row(g, 'Lite mode', 'Drops blur, spin and visualiser effects',
+    seg([['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], S.lite, setLite));
+
+  g = group('AI Help', 'Optional assistant — off until you turn it on');
+  row(g, 'AI Help', S.aiOn ? 'On — answers and playlists from your own key' : 'Off — nothing runs and no button shows',
+    toggle(S.aiOn, on => { setAIOn(on); render(); }));
+  if (S.aiOn) {
+    row(g, 'Provider', 'Five services — if one fails, another saved key takes over',
+      btn(aiCur()[1].split(' — ')[0], () => { openAIPan(); }, 1));
+    row(g, 'AI playlists', 'Describe a vibe, get a playable mix', btn('Make one', () => aiMakePl(), 1));
+  }
+  row(g, 'Privacy', 'Keys and chats stay on this device', btn('How it works', () => modal(`<h3>AI Help privacy</h3>
+    <div class="sb2">Your keys are saved only in this browser's local storage and requests go straight from your browser to the AI service you picked. Sonora's own server never sees a key or a question, and no key is ever written into the app or its files. The assistant is off by default; remove a key and every trace of it is gone.</div>
+    <button class="wb pri" onclick="closeM()">Got it</button>`)));
 
   g = group('Playback', 'How Sonora sounds and behaves');
   row(g, 'Streaming quality', QUAL.find(x => x.v === S.q).n + ' · ' + S.q + ' kbps', btn('Change', () => openPan('#qPan'), 1));
@@ -2002,6 +2155,10 @@ function vPrefs(v) {
   }
 
   g = group('About', 'Sonora');
+  row(g, 'Update source', 'Locked to the official repository — cannot be changed',
+    btn('Verify', () => { const src = pinUpdateSource();
+      modal(`<h3>Update source</h3><div class="sb2">This copy only ever updates from the official Sonora repository. The address is baked into the app, shown read-only, and re-checked on every boot — it cannot be pointed anywhere else by anyone.</div>
+        <input class="inp" readonly value="${esc(src)}" style="width:100%"><button class="wb pri" onclick="closeM()">Close</button>`); }, 1));
   row(g, 'Community', (liveData.total || 0) + ' total listeners · ' + (liveData.n || 0) + ' online now',
     btn('Refresh', () => { beat(); toast('Refreshed'); }));
   row(g, 'Updates', 'Where new versions come from', btn('Open', () => nav('get')));
@@ -3123,6 +3280,40 @@ function fsRender() {
       addEventListener('pointermove', e => dragging && seekAt(e));
       addEventListener('pointerup', () => dragging = false);
       body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a : '')}</p>`));
+    } else if (S.pSty === 'vinyl') {
+      /* Vinyl: the artwork pressed into a record — grooves, a centre label,
+         a progress ring around the platter and a needle that lifts when the
+         music stops. The disc only ever animates with transform (rotation),
+         so it stays on the GPU compositing path even on cheap phones. */
+      const pct = au.duration ? (au.currentTime / au.duration) * 100 : 0;
+      const o = el('div', 'vwrap', `
+        <div class="vinyl">
+          <div class="vring" id="vinylRing"></div>
+          <div class="vdisc"><img src="${s ? s.img : ''}" alt=""><span class="vlab">SONORA</span></div>
+          <div class="vneedle"></div>
+        </div>`);
+      body.appendChild(o);
+      const ring = o.querySelector('.vring');
+      const paint = p => ring.style.background = `conic-gradient(var(--ac) 0 ${p}%, color-mix(in srgb,var(--tx) 14%,transparent) ${p}% 100%)`;
+      paint(pct);
+      orbTick = () => paint(au.duration ? (au.currentTime / au.duration) * 100 : 0);
+      /* seek by tapping or dragging around the platter */
+      const seekAt = ev => { const r = o.querySelector('.vinyl').getBoundingClientRect();
+        const x = (ev.touches ? ev.touches[0] : ev).clientX - (r.left + r.width / 2);
+        const y = (ev.touches ? ev.touches[0] : ev).clientY - (r.top + r.height / 2);
+        let deg = Math.atan2(x, -y) * 180 / Math.PI; if (deg < 0) deg += 360;
+        if (au.duration) au.currentTime = (deg / 360) * au.duration; };
+      let dragging = false;
+      o.querySelector('.vinyl').addEventListener('pointerdown', e => { dragging = true; seekAt(e); });
+      addEventListener('pointermove', e => dragging && seekAt(e));
+      addEventListener('pointerup', () => dragging = false);
+      /* spin + needle follow play/pause without re-rendering the tab */
+      const disc = o.querySelector('.vdisc'), nd = o.querySelector('.vneedle');
+      if (vinylSync) { au.removeEventListener('play', vinylSync); au.removeEventListener('pause', vinylSync); }
+      vinylSync = () => { const go = !au.paused; disc.classList.toggle('go', go); nd.classList.toggle('up', !go); };
+      vinylSync();
+      au.addEventListener('play', vinylSync); au.addEventListener('pause', vinylSync);
+      body.appendChild(el('div', 'fsmeta', `<h2>${esc(s ? s.t : 'Nothing playing')}</h2><p>${esc(s ? s.a : '')}</p>`));
     } else if (S.pSty === 'wave') {
       const a = el('div', 'fsart wv', `<img src="${s ? s.img : ''}" alt="">`);
       body.appendChild(a);
@@ -3260,9 +3451,10 @@ function fsRenderTail(body, s) {
 /* Per-frame hooks for the Orbit and Wave player styles. They are plain
    nulls when those styles are off, so the timeupdate path costs nothing. */
 let orbTick = null, waveTick = null;
+let vinylSync = null;
 let vR;
 function startViz() {
-  const cv = $('#viz'); if (!cv || !anN) return;
+  const cv = $('#viz'); if (!cv || !anN || liteOn()) return;
   const g = cv.getContext('2d', { alpha: true, desynchronized: true });
   const n = anN.frequencyBinCount, arr = new Uint8Array(n);
   cancelAnimationFrame(vR);
@@ -3302,6 +3494,97 @@ function startViz() {
     g.globalAlpha = 1;
     vR = requestAnimationFrame(loop);
   }; loop();
+}
+
+/* ================= RADIAL QUICK MENU ================= */
+/* Press-and-hold the artwork (or tap More in the player) and six actions fan
+   out around the press point — the pattern research keeps finding on music
+   concepts because it keeps one hand enough. Lite mode and reduced-motion
+   get the plain list menu instead: the fan is decoration, the actions are
+   the point. */
+function closeRadial() { const r = $('#radial'); if (r) r.remove(); }
+function openRadial(x, y) {
+  const s = S.queue[S.idx];
+  if (!s) return toast('Nothing playing');
+  closeRadial();
+  if (liteOn() || (matchMedia('(prefers-reduced-motion: reduce)').matches)) return ctxMenu({ clientX: x, clientY: y }, s);
+  const cx = innerWidth / 2, cy = innerHeight / 2;
+  x = clamp(x ?? cx, 90, innerWidth - 90); y = clamp(y ?? cy, 120, innerHeight - 140);
+  const acts = [
+    ['Playlist', I.plus, () => quickAdd(s)],
+    ['Like', I.heart, () => like(s)],
+    ['Download', I.dl, () => dlSheet(s)],
+    ['Radio', I.radio, () => startRadio(s)],
+    ['Sleep', I.clock, () => { clearInterval(S.tmr); S.tmr = null; S.tmrEnd = -1; toast('Stopping after this track'); }],
+    ['Share', I.share, () => { const tx = `${s.t} — ${s.a}`;
+      navigator.share ? navigator.share({ title: tx, text: 'Listening on Sonora' }).catch(() => { }) : (navigator.clipboard?.writeText(tx), toast('Copied')); }]
+  ];
+  const R = 116, N = acts.length;
+  const w = el('div', 'radial', `<div class="rdscrim"></div>
+    <div class="rdanchor" style="left:${x}px;top:${y}px">
+      <button class="rdx" aria-label="Close menu">${I.dots}</button>
+      ${acts.map(([t, ic], i) => { const a = (-90 + i * (360 / N)) * Math.PI / 180;
+        return `<button class="rdb" data-i="${i}" style="--tx:${Math.round(Math.cos(a) * R)}px;--ty:${Math.round(Math.sin(a) * R)}px">${ic}<span>${t}</span></button>`; }).join('')}
+    </div>`);
+  w.id = 'radial';
+  const shut = () => { w.classList.add('bye'); setTimeout(() => w.remove(), 180); };
+  w.querySelector('.rdscrim').onclick = shut;
+  w.querySelector('.rdx').onclick = e => { e.stopPropagation(); shut(); };
+  w.querySelectorAll('.rdb').forEach(b => b.onclick = e => {
+    e.stopPropagation(); shut();
+    setTimeout(() => acts[+b.dataset.i][2](), 120);
+  });
+  document.body.appendChild(w);
+  requestAnimationFrame(() => w.classList.add('open'));
+  buzz(12);
+}
+
+/* ================= QUEUE BOTTOM SHEET ================= */
+/* "Up next" without leaving the player: a sheet slides up from the bottom
+   edge — thumb territory — with the current track and whatever comes next.
+   Drag-free by design; reordering stays on the full Queue page. */
+function closeQSheet() { const q = $('#qsheet'); if (q) { q.classList.add('bye'); setTimeout(() => q.remove(), 200); } }
+function openQSheet() {
+  closeQSheet();
+  const cur = S.queue[S.idx], up = S.queue.slice(S.idx + 1);
+  const w = el('div', 'qsheet', `
+    <div class="qsscrim"></div>
+    <div class="qsbody sc" role="dialog" aria-label="Up next">
+      <div class="qsgrip"></div>
+      <div class="qshead"><b>Up next</b><span>${up.length ? up.length + ' tracks' : 'End of the queue'}</span>
+        <button class="qsx" aria-label="Close">${I.x}</button></div>
+      ${cur ? `<div class="qsnow"><img src="${imgAt(cur.img, 50)}" alt="">
+        <div><b class="cl">${esc(cur.t)}</b><span class="cl">${esc(cur.a)}</span></div>
+        <span class="qsnp">Now</span></div>` : ''}
+      <div class="qslist">${up.length ? up.slice(0, 10).map((t, i) => `
+        <button class="qsrow" data-i="${i}"><img src="${imgAt(t.img, 50)}" alt="" loading="lazy">
+          <div><b class="cl">${esc(t.t)}</b><span class="cl">${esc(t.a)}</span></div>
+          <span class="dr">${fmt(t.d)}</span></button>`).join('')
+        + (up.length > 10 ? `<div class="qsmore">+ ${up.length - 10} more</div>` : '')
+        : `<div class="qsmore">Autoplay keeps it going if you let it</div>`}</div>
+      <div class="qstools">
+        <button class="sbtn" data-a="open">Full queue</button>
+        <button class="sbtn" data-a="shuf">Shuffle order</button>
+        <button class="sbtn" data-a="clr">Clear upcoming</button>
+      </div>
+    </div>`);
+  w.id = 'qsheet';
+  const shut = () => { w.classList.add('bye'); setTimeout(() => w.remove(), 200); };
+  w.querySelector('.qsscrim').onclick = shut;
+  w.querySelector('.qsx').onclick = shut;
+  w.querySelectorAll('.qsrow').forEach(b => b.onclick = () => { shut(); setTimeout(() => play(S.queue, S.idx + 1 + +b.dataset.i), 140); });
+  w.querySelectorAll('.qstools .sbtn').forEach(b => b.onclick = () => {
+    const a = b.dataset.a; shut();
+    setTimeout(() => {
+      if (a === 'open') nav('queue');
+      else if (a === 'shuf') { const c = S.queue[S.idx];
+        S.queue = [...S.queue].sort(() => Math.random() - .5);
+        S.idx = Math.max(0, S.queue.findIndex(x => x === c)); render(); toast('Queue shuffled'); }
+      else if (a === 'clr') { S.queue = S.queue.slice(0, S.idx + 1); counts(); toast('Upcoming cleared'); }
+    }, 140);
+  });
+  document.body.appendChild(w);
+  requestAnimationFrame(() => w.classList.add('open'));
 }
 
 /* ================= LIVE LISTENERS ================= */
@@ -3499,6 +3782,258 @@ function moveCmd(d) {
   cur && cur.scrollIntoView({ block: 'nearest' });
 }
 
+/* ================= AI HELP ================= */
+/* An optional assistant — OFF by default, turned on in Settings. Bring your
+   own key from any of five providers; it is pasted once, kept ONLY in this
+   browser's localStorage and sent straight from the browser to the
+   provider. No key ever ships inside Sonora, and nothing about your
+   listening passes through Sonora's own server. If the chosen provider
+   fails, any other provider with a saved key takes over automatically —
+   the assistant never depends on a single service. */
+const AI_PROVIDERS = [
+  ['openrouter', 'OpenRouter — many models', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter/auto',
+    'openrouter.ai/keys — sign up, Create Key. Starts with sk-or-'],
+  ['groq', 'Groq — very fast, free', 'https://api.groq.com/openai/v1/chat/completions', 'llama-3.3-70b-versatile',
+    'console.groq.com/keys — sign up, Create API Key. Starts with gsk_'],
+  ['gemini', 'Google Gemini — free', 'gemini', 'gemini-2.0-flash',
+    'aistudio.google.com/apikey — sign in with Google, Create API key. Starts with AIza'],
+  ['openai', 'OpenAI', 'https://api.openai.com/v1/chat/completions', 'gpt-4o-mini',
+    'platform.openai.com/api-keys — sign up, Create new secret key. Starts with sk-'],
+  ['mistral', 'Mistral — free tier', 'https://api.mistral.ai/v1/chat/completions', 'mistral-small-latest',
+    'console.mistral.ai — sign up, API Keys, Create a new key']];
+const AI = { msgs: [], busy: false };
+const aiCur = () => AI_PROVIDERS.find(x => x[0] === S.aiProv) || AI_PROVIDERS[0];
+const aiModel = p => { const m = S.aiModels[p]; return (typeof m === 'string' && m.trim()) ? m.trim() : ((AI_PROVIDERS.find(x => x[0] === p) || [])[3] || 'auto'); };
+const aiHasKey = p => !!(S.aiKeys[p] || '').trim();
+function aiSystem() {
+  const s = S.queue[S.idx];
+  return 'You are Sonora Assist, the helper inside the Sonora music player web app. ' +
+    'Sonora facts: free, no account, no ads; 7-band equaliser with 16 studio modes; ' +
+    'player styles Card/Orbit/Wave/Karaoke/Vinyl; six looks and eight colour themes; ' +
+    'offline downloads; lyrics with karaoke mode; live listening rooms with chat; ' +
+    'quality up to 320 kbps with data-saver; shareable playlist links; command palette (Ctrl+K); ' +
+    'Lite mode for cheap phones. Answer in the user language. Be brief and plain, max 120 words. ' +
+    (s ? 'Currently playing: ' + s.t + ' by ' + s.a + '. ' : '') +
+    'You cannot play music yourself; to build a playlist, tell the user to use the Make-a-playlist button and describe a mood.';
+}
+/* One request, shaped for whichever provider serves it. Gemini speaks its
+   own dialect; the other four are OpenAI-compatible. */
+function aiRequest(p, messages, maxTokens) {
+  const key = (S.aiKeys[p] || '').trim();
+  if (!key) return null;
+  if (p === 'gemini') {
+    const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+    const rest = messages.filter(m => m.role !== 'system');
+    return {
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(aiModel(p)) + ':generateContent',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        ...(sys ? { systemInstruction: { parts: [{ text: sys }] } } : {}),
+        contents: rest.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+        generationConfig: { maxOutputTokens: maxTokens }
+      })
+    };
+  }
+  const prov = AI_PROVIDERS.find(x => x[0] === p) || [];
+  return {
+    url: prov[2],
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, ...(p === 'openrouter' ? { 'X-Title': 'Sonora' } : {}) },
+    body: JSON.stringify({ model: aiModel(p), messages, max_tokens: maxTokens })
+  };
+}
+function aiText(p, d) {
+  try {
+    if (p === 'gemini') {
+      const parts = d.candidates[0].content.parts || [];
+      return parts.map(x => x.text).filter(Boolean).join('\n');
+    }
+    return d.choices[0].message.content || '';
+  } catch (e) { return ''; }
+}
+/* Call the chosen provider first; on any failure keep going down every
+   provider that has a saved key. One dead service never kills the
+   assistant. 35s timeout per attempt so a hung connection cannot hang
+   the panel. */
+async function aiCall(messages, maxTokens = 600) {
+  const order = [S.aiProv, ...AI_PROVIDERS.map(x => x[0]).filter(k => k !== S.aiProv)];
+  const chain = order.filter(aiHasKey);
+  if (!chain.length) { const e = new Error('Add a key first — Settings, AI Help'); e.noKey = true; throw e; }
+  let lastErr = null;
+  for (const p of chain) {
+    const req = aiRequest(p, messages, maxTokens);
+    try {
+      const ctl = new AbortController();
+      const to = setTimeout(() => ctl.abort(), 35000);
+      const r = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: ctl.signal });
+      clearTimeout(to);
+      if (!r.ok) {
+        lastErr = new Error((
+          { 401: 'That key was refused — check it or make a new one', 403: 'That key cannot use this model', 402: 'No credits left on that key', 404: 'That model name was not found — use the default', 429: 'Rate limited — wait a moment' }[r.status]
+          || 'The service answered ' + r.status) + (p !== S.aiProv ? ' (' + p + ')' : ''));
+        continue;
+      }
+      const d = await r.json();
+      const txt = aiText(p, d);
+      if (!txt) { lastErr = new Error('Empty answer — try again'); continue; }
+      return { text: String(txt).trim(), via: p };
+    } catch (e) {
+      if (e && e.noKey) throw e;
+      lastErr = e.name === 'AbortError' ? new Error('The answer took too long — try again') : (e instanceof TypeError ? new Error('Could not reach ' + p + ' — check the connection') : e);
+    }
+  }
+  throw lastErr || new Error('No provider answered');
+}
+/* Master switch. Off by default: the button stays hidden and nothing about
+   the assistant loads or runs until it is turned on in Settings. */
+function setAIOn(on) {
+  S.aiOn = !!on; SET('aiOn', S.aiOn);
+  const b = $('#aiBtn'); if (b) b.style.display = S.aiOn ? '' : 'none';
+  if (S.aiOn && !aiHasKey(S.aiProv)) openAIPan();
+}
+/* Build the panel body once; afterwards only the message list redraws so
+   the input never loses focus. */
+function aiEnsure() {
+  const p = $('#aiPan'); if (!p || p.dataset.ready) return;
+  p.dataset.ready = '1';
+  p.innerHTML = `
+    <h3>AI Help <button class="pb" id="aiX">${I.x}</button></h3>
+    <p class="hint">Answers about Sonora and instant playlists. Bring your own key — it stays in this browser only.</p>
+    <div id="aiSetup"></div>
+    <div class="aibody sc" id="aiBody"></div>
+    <div class="chips" id="aiChips"></div>
+    <div class="aiin"><input id="aiText" placeholder="Ask anything about Sonora" maxlength="300" autocomplete="off">
+      <button class="wb pri" id="aiSend">Ask</button></div>`;
+  $('#aiX').onclick = () => p.classList.remove('open');
+  const chips = [['What can Sonora do?', null], ['How do I use the equaliser?', null],
+    ['Best sound mode for old Bollywood?', null], ['Make a playlist', 'gym workout hindi high energy']];
+  chips.forEach(([t, topic]) => { const c = el('button', 'chip', t);
+    c.onclick = () => { if (topic) aiMakePl(topic); else { $('#aiText').value = t; aiSend(); } };
+    $('#aiChips').appendChild(c); });
+  $('#aiSend').onclick = () => aiSend();
+  $('#aiText').onkeydown = e => { if (e.key === 'Enter') aiSend(); };
+}
+function aiSetupCard() {
+  const w = $('#aiSetup'); if (!w) return;
+  const cur = aiCur();
+  const anyKey = AI_PROVIDERS.some(([k]) => aiHasKey(k));
+  if (anyKey) {
+    w.innerHTML = `<div class="aiok"><b>${esc(cur[1])} is ready</b>
+      <span>Model: ${esc(aiModel(cur[0]))}</span>
+      <span class="aimut">Keys live only in this browser. Switch provider or change the key any time below.</span></div>`;
+    const sw = el('button', 'sbtn', 'Change provider or key');
+    sw.style.margin = '0 0 10px';
+    sw.onclick = () => aiKeyForm();
+    w.appendChild(sw);
+    return;
+  }
+  aiKeyForm();
+}
+function aiKeyForm() {
+  const w = $('#aiSetup'); if (!w) return;
+  const cur = aiCur();
+  w.innerHTML = `<div class="aicard">
+    <b>Choose a service and paste your key</b>
+    <span>Five services work. If one fails or runs dry, any other with a saved key takes over automatically — the assistant never depends on a single one.</span>
+    <select id="aiProvSel" class="inp">${AI_PROVIDERS.map(([k, n]) => `<option value="${k}"${k === cur[0] ? ' selected' : ''}>${n}</option>`).join('')}</select>
+    <span id="aiHow" class="aihow">${esc((AI_PROVIDERS.find(x => x[0] === cur[0]) || [])[4] || '')}</span>
+    <input type="password" id="aiKeyIn" class="inp" placeholder="Paste your key" autocomplete="off">
+    <input id="aiModelIn" class="inp" placeholder="Model (leave empty for the default)" value="${esc(S.aiModels[cur[0]] || '')}">
+    <div style="display:flex;gap:8px">
+      <button class="wb pri" id="aiSave" style="flex:1">Save key</button>
+      <button class="wb" id="aiTest" style="flex:1">Test it</button>
+    </div>
+    <span class="aimut">The key is saved only in this browser and sent only to the service you picked. Never to Sonora, never into any file. Remove it any time.</span>
+  </div>`;
+  const sel = w.querySelector('#aiProvSel');
+  sel.onchange = () => { const p = (AI_PROVIDERS.find(x => x[0] === sel.value) || [])[0];
+    S.aiProv = p; SET('aiProv', p);
+    w.querySelector('#aiHow').textContent = (AI_PROVIDERS.find(x => x[0] === p) || [])[4] || '';
+    w.querySelector('#aiModelIn').value = S.aiModels[p] || ''; };
+  w.querySelector('#aiSave').onclick = () => {
+    const k = w.querySelector('#aiKeyIn').value.trim(), m = w.querySelector('#aiModelIn').value.trim();
+    if (!k) return toast('Paste a key first');
+    S.aiKeys[S.aiProv] = k; SET('aiKeys', S.aiKeys);
+    if (m) { S.aiModels[S.aiProv] = m; SET('aiModels', S.aiModels); }
+    if (!S.aiOn) setAIOn(true);
+    aiSetupCard(); aiRender(); toast('Key saved — in this browser only');
+  };
+  w.querySelector('#aiTest').onclick = async () => {
+    const k = w.querySelector('#aiKeyIn').value.trim() || S.aiKeys[S.aiProv];
+    if (!k) return toast('Paste a key first');
+    if (k !== (S.aiKeys[S.aiProv] || '')) { S.aiKeys[S.aiProv] = k; SET('aiKeys', S.aiKeys); }
+    if (!S.aiOn) setAIOn(true);
+    const t = w.querySelector('#aiTest'); t.textContent = 'Testing…'; t.disabled = true;
+    try { const r = await aiCall([{ role: 'user', content: 'Reply with the single word: working' }], 10);
+      toast((aiCur()[1]) + ' answered — it works'); }
+    catch (e) { toast(e.message); }
+    t.textContent = 'Test it'; t.disabled = false;
+  };
+}
+function aiRender(typing) {
+  const b = $('#aiBody'); if (!b) return;
+  b.innerHTML = AI.msgs.map(m => `<div class="aim ${m.r ? 'air' : ''}${m.e ? ' e' : ''}">${esc(m.t)}</div>`).join('')
+    + (typing ? '<div class="aim air aitype"><i></i><i></i><i></i></div>' : '');
+  b.scrollTop = b.scrollHeight;
+}
+async function aiSend() {
+  const inp = $('#aiText'); const q = (inp ? inp.value : '').trim();
+  if (!q || AI.busy) return;
+  if (!AI_PROVIDERS.some(([k]) => aiHasKey(k))) { aiKeyForm(); const k = $('#aiKeyIn'); if (k) { k.focus(); toast('Add a key first — it stays on this device'); } return; }
+  if (!S.aiOn) setAIOn(true);
+  AI.busy = true; if (inp) inp.value = '';
+  AI.msgs.push({ t: q }); aiRender(true);
+  try {
+    const messages = [{ role: 'system', content: aiSystem() },
+      ...AI.msgs.slice(-8).map(m => ({ role: m.r ? 'assistant' : 'user', content: m.t }))];
+    const a = await aiCall(messages);
+    AI.msgs.push({ t: a.text + (a.via !== S.aiProv ? '\n(answered via ' + (AI_PROVIDERS.find(x => x[0] === a.via) || [])[1] + ')' : ''), r: 1 });
+  } catch (e) { AI.msgs.push({ t: 'Could not answer: ' + e.message, r: 1, e: 1 }); }
+  AI.busy = false; aiRender();
+}
+/* Describe a vibe, get a real playlist: the model only suggests song names;
+   Sonora searches its own catalog for each one, so every track that lands
+   in the playlist is a track that actually plays here. Parsing is
+   deliberately forgiving — JSON array, numbered list or plain lines all
+   work. */
+async function aiMakePl(topic) {
+  if (!AI_PROVIDERS.some(([k]) => aiHasKey(k))) { openAIPan(); aiKeyForm(); const k = $('#aiKeyIn'); if (k) k.focus(); return toast('Add a key first — it stays on this device'); }
+  if (AI.busy) return;
+  AI.busy = true;
+  const ask = topic || (prompt('What should the mix feel like? e.g. "rainy evening ghazals"') || '');
+  if (!ask) { AI.busy = false; return; }
+  if ($('#aiPan').classList.contains('open')) { AI.msgs.push({ t: 'Make a playlist: ' + ask }); aiRender(true); }
+  else toast('Building "' + ask + '"');
+  try {
+    const a = await aiCall([
+      { role: 'system', content: 'You suggest songs. Reply with ONLY a list of exactly 12 tracks, one per line, each formatted "Song Title — Artist". No other text, no numbering needed.' },
+      { role: 'user', content: 'Songs for: ' + ask + '. Prefer well-known tracks.' }]);
+    let names = [];
+    const raw = String(a.text || '').replace(/```[a-z]*|```/g, '').trim();
+    try { const j = JSON.parse(raw.replace(/^[^[]*/, '[').replace(/[^]]*$/, ']')); if (Array.isArray(j)) names = j.filter(x => typeof x === 'string'); } catch (e2) { }
+    if (!names.length) names = raw.split('\n').map(l => l.replace(/^\s*(?:\d+[.)]\s*)?[-*]\s*/, '').trim()).filter(l => l && l.length > 3 && l.length < 90);
+    names = [...new Set(names)].slice(0, 12);
+    if (!names.length) throw new Error('the answer had no song list');
+    const found = [];
+    await Promise.all(names.map(async n => {
+      try { const d = await api('/api/search?q=' + encodeURIComponent(n) + '&n=1');
+        const s = (d.songs || [])[0]; if (s && s.id) found.push(s); } catch (e) { }
+    }));
+    if (!found.length) throw new Error('no matches in the catalog — try more famous songs');
+    S.pls.push({ id: Date.now(), name: 'AI Mix — ' + ask.slice(0, 24), songs: found });
+    save();
+    const via = a.via !== S.aiProv ? ' (via ' + (AI_PROVIDERS.find(x => x[0] === a.via) || [])[1] + ')' : '';
+    AI.msgs.push({ t: found.length + ' tracks saved to "AI Mix — ' + ask.slice(0, 24) + '". ' + (found.length < names.length ? '(' + (names.length - found.length) + ' could not be matched) ' : '') + via, r: 1 });
+    toast(found.length + ' tracks in your new AI Mix');
+    if (S.view === 'pls') render();
+  } catch (e) {
+    AI.msgs.push({ t: 'Playlist failed: ' + e.message, r: 1, e: 1 });
+    toast('Playlist failed: ' + e.message);
+  }
+  AI.busy = false; aiRender();
+}
+function openAIPan() { aiEnsure(); aiSetupCard(); aiRender(); openPan('#aiPan'); const t = $('#aiText'); if (t && AI_PROVIDERS.some(([k]) => aiHasKey(k))) setTimeout(() => t.focus(), 150); }
+
+
 /* ================= SKINS (App Look) ================= */
 /* A skin restyles the whole app in one tap — layout mood, surfaces, glow —
    while every feature keeps working exactly the same. Classic is the app as
@@ -3542,8 +4077,9 @@ function skinPicker() {
 /* ================= PLAYER STYLES ================= */
 /* How the full-screen player draws itself. Card is the classic square art;
    Orbit rings the art with the progress circle; Wave seeks on a waveform;
-   Lyric puts the karaoke lines front and centre. */
-const PSTYLES = [['card', 'Card'], ['orbit', 'Orbit'], ['wave', 'Wave'], ['lyric', 'Karaoke']];
+   Lyric puts the karaoke lines front and centre; Vinyl spins the art on a
+   turntable with grooves and a needle, progress running around the rim. */
+const PSTYLES = [['card', 'Card'], ['orbit', 'Orbit'], ['wave', 'Wave'], ['lyric', 'Karaoke'], ['vinyl', 'Vinyl']];
 function setPSty(k) { S.pSty = k; SET('pSty', k); document.body.dataset.ps = k;
   const f = $('#fs'); if (f && f.classList.contains('open')) fsRender(); }
 
@@ -3576,6 +4112,29 @@ function setGlass(on) {
 function setGlassW(on) {
   S.glw = !!on; SET('glw', S.glw);
   document.body.classList.toggle('glw', S.glw);
+}
+/* ================= LITE MODE ================= */
+/* One switch for everything that costs GPU on a cheap phone: backdrop blur,
+   spinning artwork, canvas visualiser, animated dice. Auto (the default)
+   trusts the signals the browser already publishes — low RAM, data-saver,
+   reduced-motion — so nobody has to find this setting to get a smooth app. */
+function liteOn() { return document.body.classList.contains('lite'); }
+function applyLite() {
+  let on = S.lite === 'on';
+  if (S.lite === 'auto') {
+    const mem = navigator.deviceMemory || 0;
+    const save = !!(navigator.connection && navigator.connection.saveData);
+    const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    on = (mem > 0 && mem <= 4) || save || rm;
+  }
+  document.body.classList.toggle('lite', on);
+  return on;
+}
+function setLite(k) {
+  S.lite = (k === 'on' || k === 'off') ? k : 'auto';
+  SET('lite', S.lite);
+  applyLite();
+  toast('Lite mode: ' + (liteOn() ? 'on — smooth on any phone' : 'off'));
 }
 const ACCENTS = [['default','',''],['lime','#d4ff3f','#7ef29d'],['ice','#5ad1ff','#a78bfa'],
 ['rose','#ff6b9d','#ffa07a'],['gold','#ffc93c','#ff8a3d'],['mint','#3ddc97','#7ef29d']];
@@ -3610,7 +4169,7 @@ function paintAppearance() {
 
 /* ================= EVENTS ================= */
 const closeSide = () => { $('#side').classList.remove('open'); $('#scrim').classList.remove('on'); };
-const PANS = ['#eqPan', '#thPan', '#qPan', '#tmPan'];
+const PANS = ['#eqPan', '#thPan', '#qPan', '#tmPan', '#aiPan'];
 const openPan = id => { PANS.forEach(p => p !== id && $(p).classList.remove('open')); $(id).classList.toggle('open'); };
 $$('.nav').forEach(b => b.onclick = () => nav(b.dataset.v));
 $$('.tabbar button').forEach(b => b.onclick = () => { buzz(); b.dataset.v === 'search' ? (nav('search'), $('#q').focus()) : nav(b.dataset.v); });
@@ -3671,6 +4230,35 @@ $('#likeB').onclick = $('#mLike').onclick = () => { const s = S.queue[S.idx]; s 
 $('#fsLike').onclick = () => { const s = S.queue[S.idx]; if (s) { like(s); fsRender(); } };
 $('#fsDl').onclick = () => { const s = S.queue[S.idx]; s ? dlSheet(s) : toast('Nothing playing'); };
 $('#fsRadio').onclick = () => { const s = S.queue[S.idx]; s && startRadio(s); };
+/* Radial quick menu + queue bottom sheet, straight from the player. */
+$('#fsMore').onclick = () => openRadial(innerWidth / 2, innerHeight / 2);
+$('#fsQ').onclick = () => openQSheet();
+/* Long-press the artwork (or right-click it) for the radial fan; a quick
+   swipe still seeks, a long press wins only if the finger stays put. */
+(() => {
+  const body = $('#fsBody');
+  let lt = null;
+  body.addEventListener('touchstart', e => {
+    if (S.fsTab !== 'art' || e.target.closest('button')) return;
+    const t = e.touches[0];
+    lt = setTimeout(() => { lt = null; buzz(14); openRadial(t.clientX, t.clientY); }, 480);
+  }, { passive: true });
+  body.addEventListener('touchend', () => clearTimeout(lt));
+  body.addEventListener('touchmove', () => clearTimeout(lt), { passive: true });
+  body.addEventListener('contextmenu', e => {
+    if (S.fsTab !== 'art' || e.target.closest('button')) return;
+    e.preventDefault(); openRadial(e.clientX, e.clientY);
+  });
+})();
+/* Long-press the mini player for the up-next sheet instead of the player. */
+(() => {
+  const m = $('#mini');
+  let lt = null;
+  m.addEventListener('touchstart', e => { const t = e.touches[0];
+    lt = setTimeout(() => { lt = null; buzz(14); openQSheet(); }, 480); }, { passive: true });
+  m.addEventListener('touchend', () => clearTimeout(lt));
+  m.addEventListener('touchmove', () => clearTimeout(lt), { passive: true });
+})();
 $('#dlB').onclick = () => { const s = S.queue[S.idx]; s ? dlSheet(s) : toast('Nothing playing'); };
 $('#autoB').onclick = e => { S.autoplay = !S.autoplay; SET('auto', S.autoplay); e.currentTarget.classList.toggle('on', S.autoplay); toast('Autoplay ' + (S.autoplay ? 'on' : 'off')); };
 $('#autoB').classList.toggle('on', S.autoplay);
@@ -3747,7 +4335,8 @@ au.ontimeupdate = () => {
   }
   const c = fmt(au.currentTime), d = fmt(au.duration);
   setT('tc', c); setT('td', d); setT('tc2', c); setT('td2', d);
-  const n = Date.now(); if (n - lastTick > 5000 && !au.paused) { S.stats.secs += 5; lastTick = n; save(); }
+  const n = Date.now(); if (n - lastTick > 5000 && !au.paused) { S.stats.secs += 5; lastTick = n;
+    const dk = new Date().toISOString().slice(0, 10); S.stats.days[dk] = (S.stats.days[dk] || 0) + 5; save(); }
   /* Keep the lock-screen / notification scrubber honest in real time. The
      call is guarded internally and is a no-op where Media Session is absent
      (jsdom, some WebViews), so it costs nothing there. */
@@ -3861,6 +4450,7 @@ $('#cdMin').onclick = () => toggleDock(false);
 $('#eqBtn').onclick = () => openPan('#eqPan');
 $('#thBtn').onclick = () => openPan('#thPan');
 $('#qBtn').onclick = () => openPan('#qPan');
+$('#aiBtn').onclick = () => openAIPan();
 $('#tmB').onclick = () => openPan('#tmPan');
 $('#eqX').onclick = () => $('#eqPan').classList.remove('open');
 $('#thX').onclick = () => $('#thPan').classList.remove('open');
@@ -3907,7 +4497,7 @@ addEventListener('keydown', e => {
   if (cmdOpen && e.key === 'Escape') { closeCmd(); return; }
   const ty = /input|textarea|select/i.test(e.target.tagName);
   if (e.key === '/' && !ty) { e.preventDefault(); return $('#q').focus(); }
-  if (e.key === 'Escape') { $('#fs').classList.remove('open'); closeM(); PANS.forEach(p => $(p).classList.remove('open')); closeSide(); $('#ctx').classList.remove('open'); toggleDock(false); }
+  if (e.key === 'Escape') { $('#fs').classList.remove('open'); closeM(); PANS.forEach(p => $(p).classList.remove('open')); closeSide(); $('#ctx').classList.remove('open'); toggleDock(false); closeRadial(); closeQSheet(); }
   if (ty) return;
   const k = e.key.toLowerCase();
   if (e.code === 'Space') { e.preventDefault(); toggle(); }
@@ -4016,9 +4606,22 @@ Please note: takedown notices should generally be directed at the party that act
 /* The logo mark is inlined in index.html so it always renders — a fetch-based
    logo silently vanished in offline starts, sandboxed previews and older
    WebViews, which made the brand look like plain text. */
-{ const sv = $('#sVer'); if (sv) sv.textContent = 'v' + String(BUILD.match(/\d+/) || '?')[0]; }
+{ const sv = $('#sVer'); if (sv) sv.textContent = 'v' + (BUILD.match(/\d+/) || ['?'])[0]; }
 setTheme(S.theme); setDens(S.dens); setAccent(S.accent); setFont(S.font); setCorner(S.corner); setGlass(S.glass); setGlassW(S.glw);
 setSkin(S.skin); document.body.dataset.ps = S.pSty;
+/* update source pin: verified every boot, healed silently if anything
+   ever moved it (see UPDATE_SOURCE above) */
+pinUpdateSource();
+/* performance profile: applies the lite class before first paint matters */
+applyLite();
+/* AI Help stays invisible until it is switched on in Settings */
+{ const b = $('#aiBtn'); if (b && !S.aiOn) b.style.display = 'none'; }
+/* one-time hello for the fresh default look — only for people who never
+   picked a skin themselves */
+if (!LS('skinNudge41', false) && LS('skin', null) === null) {
+  SET('skinNudge41', true);
+  setTimeout(() => notice('New in v15 — six looks, vinyl player, AI help', 'See looks', () => skinPicker()), 2200);
+}
 if (LS('hc', false)) { document.body.dataset.hc = '1'; $('#swHC').classList.add('on'); }
 buildEQ(); paintPresets(); paintModes(); paintAppearance(); paintQ(); syncKnobs();
 paintQPill();

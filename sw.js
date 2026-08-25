@@ -2,7 +2,7 @@
    Render free instances cold-start; without this the browser shows a blank
    page or a connection error. With it the UI paints instantly from cache and
    fills in data as soon as the backend answers. */
-const V = 'sonora-v39';
+const V = 'sonora-v41';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/logo.svg', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', e => {

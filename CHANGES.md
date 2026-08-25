@@ -1,3 +1,60 @@
+# v15 — Bento home, Vinyl player, AI Help, Lite mode (2026-08-25)
+
+## New
+- **Bento home dashboard** — a compact mixed-size mosaic at the top of Home:
+  Jump back in (your recent tracks, one tap each), Your week (seven day-bars
+  built from real listening history), Mood dice (one tap, one surprise mix)
+  and Daily Mix (liked + recent, deduped and shuffled). Sized so the music
+  still starts in the first screenful. Switch it off in Settings > Home.
+- **Vinyl player style** — a fifth full-screen player: the artwork pressed
+  into a record with grooves, a centre label, a needle that lifts on pause
+  and a progress ring around the platter you can drag to seek. Only
+  transform animates, so it stays smooth on cheap phones.
+- **Radial quick menu** — press and hold the artwork in the player (or tap
+  More) and six actions fan out around your finger: playlist, like,
+  download, radio, sleep, share. Lite mode and reduced-motion get the plain
+  list menu instead.
+- **Up-next bottom sheet** — tap "Up next" in the player (or long-press the
+  mini player) and a sheet slides up from the bottom edge with the current
+  track, what comes next and quick tools. No leaving the player.
+- **AI Help (optional, off by default)** — an assistant that answers
+  questions about the app and builds playlists from a description ("rainy
+  evening ghazals" becomes a real playable mix). Bring your own key from
+  any of **five providers** — OpenRouter, Groq, Google Gemini, OpenAI or
+  Mistral. If the chosen one fails, another saved key takes over
+  automatically: no single point of failure. Keys are stored only in this
+  browser, sent straight to the provider, never written into the app and
+  never seen by Sonora's server. Turn it on in Settings > AI Help.
+- **Lite mode** — Auto (default) detects low RAM, data-saver or
+  reduced-motion and quietly drops the expensive effects: backdrop blur,
+  spinning artwork, the canvas visualiser. Or force it on/off in
+  Settings > Performance.
+- **Peek carousels + ranked search** — rails show the next card half-cut so
+  it is always obvious they scroll; search results get big outline position
+  numbers.
+
+## Changed
+- **Aurora is the default look** for fresh installs. Anyone who ever chose
+  a skin keeps their choice untouched; a one-time hello points new users at
+  the six looks.
+- The Windows installer now embeds the app icon in the exe and the
+  shortcuts (win.icon + signAndEditExecutable), so nothing ships with the
+  generic Electron icon.
+- Settings gained Performance and AI Help groups and a locked, verifiable
+  update-source badge (About).
+
+## Fixed
+- **Freeze bug**: a fully unplayable queue with shuffle on used to spin
+  play->skip on cached failures forever — microtask starvation, the page
+  froze hard. Playback now counts consecutive load failures and stops with
+  a clear message after one lap of the queue.
+- The sidebar version badge showed "v3"/"v4" instead of the real build
+  number (the match returned an array, not a string).
+- A stray checkmark character in app.js failed the no-emoji release gate;
+  replaced with an SVG icon.
+
+---
+
 # v13 — App Look, offline play, easy playlists (2026-08-25)
 
 ## New
