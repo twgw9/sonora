@@ -1,9 +1,0 @@
-{
-  "name": "sonora",
-  "version": "2.0.0",
-  "private": true,
-  "description": "Sonora — music streaming with studio audio modes, downloads and listening rooms",
-  "main": "server.js",
-  "scripts": { "start": "node --openssl-legacy-provider server.js" },
-  "engines": { "node": ">=18" }
-}
