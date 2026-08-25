@@ -1,4 +1,0 @@
-# Sonora — personal music player.
-# Not intended for indexing or automated crawling.
-User-agent: *
-Disallow: /

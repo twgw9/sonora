@@ -1,8 +1,0 @@
-{
-  "version": 5,
-  "minApk": 1,
-  "notes": "Rooms work without EventSource, destructive actions ask in-app instead of a blocked browser dialog, no more leaked blobs, download sheet stops when closed",
-  "date": "2026-08-24",
-  "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
-  "repo": "https://github.com/twgw9/sonora"
-}
