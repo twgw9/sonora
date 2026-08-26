@@ -1723,11 +1723,21 @@ async function vHome(v) {
   if (S.recent.length && !S.bento) { v.appendChild(H('Jump back in', 'Pick up where you left off')); v.appendChild(railWrap(sGrid(S.recent.slice(0, 16), true))); }
   if (S.liked.length > 3) { v.appendChild(H('From your likes', 'Built from the songs you saved')); v.appendChild(railWrap(sGrid([...S.liked].sort(() => Math.random() - .5).slice(0, 16), true))); }
   const slots = {};
-  [['trending', 'Trending now', S.lang], ['charts', 'Top charts'], ['playlists', 'Curated playlists'],
+  [['trending', 'Trending now', S.lang], ['popular_artists', 'Popular Artists'], ['charts', 'Top charts'], ['playlists', 'Curated playlists'],
   ['albums', 'New releases'], ['radio', 'Stations']].forEach(([k, t, b]) => {
     v.appendChild(H(t, b)); const d = el('div'); d.appendChild(skel(6)); v.appendChild(d); slots[k] = d; });
   try {
     const d = await api('/api/home?lang=' + S.lang);
+  try {
+    const pop = await api('/api/top');
+    if (pop && pop.items && pop.items.length) {
+      const art = pop.items.filter(i => i.type === 'artist');
+      if (art.length) {
+        d.popular_artists = art;
+      }
+    }
+  } catch(e) {}
+
     pool = (d.trending || []).filter(x => x.u);
     for (const k in slots) { const a = d[k] || []; slots[k].innerHTML = '';
       slots[k].appendChild(a.length ? railWrap(a[0].u ? sGrid(a, true) : cGrid(a, true)) : emptyBox(I.music, 'Nothing here yet', 'Try another language')); }
@@ -3998,7 +4008,27 @@ function aiKeyForm() {
 }
 function aiRender(typing) {
   const b = $('#aiBody'); if (!b) return;
+const ua = navigator.userAgent;
+if (ua.indexOf('Windows') !== -1) document.body.classList.add('os-windows');
+else if (ua.indexOf('Mac OS X') !== -1) document.body.classList.add('os-mac');
+else if (ua.indexOf('Android') !== -1) document.body.classList.add('os-android');
+else if (ua.indexOf('iPhone') !== -1 || ua.indexOf('iPad') !== -1) document.body.classList.add('os-ios');
   b.innerHTML = AI.msgs.map(m => `<div class="aim ${m.r ? 'air' : ''}${m.e ? ' e' : ''}">${esc(m.t)}</div>`).join('')
+/* Hide mini player when nothing is playing */
+{
+  const checkPlayer = () => {
+    const au = document.getElementById('au');
+    const pbar = document.getElementById('pbar');
+    if (au && pbar) {
+      if (!au.src || au.src.endsWith('null') || document.querySelector('.sname').textContent === 'Nothing playing') {
+        pbar.style.display = 'none';
+      } else {
+        pbar.style.display = '';
+      }
+    }
+  };
+  setInterval(checkPlayer, 1000);
+}
     + (typing ? '<div class="aim air aitype"><i></i><i></i><i></i></div>' : '');
   b.scrollTop = b.scrollHeight;
 }
@@ -4014,6 +4044,16 @@ async function aiSend() {
       ...AI.msgs.slice(-8).map(m => ({ role: m.r ? 'assistant' : 'user', content: m.t }))];
     const a = await aiCall(messages);
     AI.msgs.push({ t: a.text + (a.via !== S.aiProv ? '\n(answered via ' + (AI_PROVIDERS.find(x => x[0] === a.via) || [])[1] + ')' : ''), r: 1 });
+/* OS Detection for Platform Specific UI */
+{
+  const ua = navigator.userAgent;
+  let os = 'web';
+  if (ua.indexOf('Windows') !== -1) os = 'windows';
+  else if (ua.indexOf('Mac OS X') !== -1 || ua.indexOf('Macintosh') !== -1) os = 'mac';
+  else if (ua.indexOf('Android') !== -1) os = 'android';
+  else if (ua.indexOf('iPhone') !== -1 || ua.indexOf('iPad') !== -1) os = 'ios';
+  document.documentElement.dataset.os = os;
+}
   } catch (e) { AI.msgs.push({ t: 'Could not answer: ' + e.message, r: 1, e: 1 }); }
   AI.busy = false; aiRender();
 }
@@ -4779,3 +4819,27 @@ async function bootUpdateCheck() {
   } catch (e) { }
 }
 setTimeout(bootUpdateCheck, 3500);
+/* OS Detection for Platform Specific UI */
+{
+  const ua = navigator.userAgent;
+  let os = 'web';
+  if (ua.indexOf('Windows') !== -1) os = 'windows';
+  else if (ua.indexOf('Mac OS X') !== -1 || ua.indexOf('Macintosh') !== -1) os = 'mac';
+  else if (ua.indexOf('Android') !== -1) os = 'android';
+  else if (ua.indexOf('iPhone') !== -1 || ua.indexOf('iPad') !== -1) os = 'ios';
+  document.documentElement.dataset.os = os;
+}
+
+/* Hide mini player when nothing is playing */
+setInterval(() => {
+  const pbar = document.getElementById('pbar');
+  const au = document.getElementById('au');
+  const sname = document.querySelector('.sname');
+  if (pbar && au && sname) {
+    if (!au.src || au.src.endsWith('null') || sname.textContent === 'Nothing playing') {
+      pbar.style.display = 'none';
+    } else {
+      pbar.style.display = '';
+    }
+  }
+}, 1000);

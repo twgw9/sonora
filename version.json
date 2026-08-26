@@ -1,7 +1,7 @@
 {
-  "version": 15,
+  "version": 16,
   "minApk": 1,
-  "notes": "v15: Bento home dashboard (jump back in, week bars, mood dice, daily mix); Vinyl — a fifth player style with grooves, needle and a progress ring; radial quick menu on long-press in the player; up-next queue as a slide-up bottom sheet; peek carousels and ranked search rows; Lite mode that auto-detects weak hardware and drops the expensive effects; optional AI Help — bring your own key, stored only on your device — that answers questions and builds playlists from a description; Aurora look is now the default; update source stays locked to the official repository and re-verifies on every boot. APK repair: early Android builds had a placeholder in the native updater so every self-update failed — the app now heals the source to the official repo on launch and catches up automatically.",
+  "notes": "v16: Platform specific UIs added for Windows, Mac and Mobile. Popular artist option included. Complete native Android source with lock screen, widgets and notifications added using SaavnMp3-Android.",
   "date": "2026-08-25",
   "source": "https://raw.githubusercontent.com/twgw9/sonora/main/",
   "repo": "https://github.com/twgw9/sonora"
