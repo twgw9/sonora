@@ -1,0 +1,52 @@
+{
+  "name": "Sonora — Music",
+  "short_name": "Sonora",
+  "id": "/",
+  "start_url": "/?src=home",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#07090a",
+  "theme_color": "#07090a",
+  "orientation": "any",
+  "categories": ["music", "entertainment"],
+  "lang": "en",
+  "dir": "ltr",
+  "description": "A music player with a real seven-band equaliser, studio sound modes, synced lyrics, offline downloads and listening rooms.",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Play trending",
+      "short_name": "Trending",
+      "description": "Start the trending mix straight away",
+      "url": "/?go=play",
+      "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Liked songs",
+      "short_name": "Liked",
+      "description": "Everything you have saved",
+      "url": "/?go=liked",
+      "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Search",
+      "short_name": "Search",
+      "description": "Find a song, artist or album",
+      "url": "/?go=search",
+      "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Listening rooms",
+      "short_name": "Rooms",
+      "description": "Listen in sync with friends",
+      "url": "/?go=room",
+      "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ],
+  "launch_handler": { "client_mode": "navigate-existing" },
+  "prefer_related_applications": false
+}
